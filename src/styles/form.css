@@ -1,4 +1,4 @@
-Fonte global
+/* Fonte global
 body {
   font-family: 'Nunito', sans-serif;
   background-color: #f4f9fb;
@@ -10,7 +10,6 @@ body {
   background-size: 280px;
 }
 
-/* Hover nos cards */
 .hover-card {
   transition: transform 0.3s ease, box-shadow 0.3s ease;
   border-radius: 12px;
@@ -22,7 +21,6 @@ body {
   box-shadow: 0 8px 20px rgba(0, 123, 255, 0.15);
 }
 
-/* Sidebar */
 .sidebar {
   background-color: #328bab;
   color: white;
@@ -59,7 +57,6 @@ body {
   font-size: 1.2rem;
 }
 
-/* Topbar */
 .topbar {
   background-color: white;
   padding: 1rem 2rem;
@@ -82,7 +79,6 @@ body {
   font-size: 1.1rem;
 }
 
-/* Card Titles */
 .card-title span {
   font-family: 'Nunito', sans-serif;
   font-weight: 600;
@@ -98,7 +94,6 @@ body {
   padding: 1.5rem;
 }
 
-/* Formulário de Atendimento */
 .formulario-container {
   width: 100%;
   max-width: 1100px;
@@ -152,7 +147,6 @@ form button[type="submit"]:hover {
   background-color: #28788f;
 }
 
-/* Grid responsivo */
 @media (max-width: 576px) {
   .topbar {
     flex-direction: column;
@@ -173,7 +167,6 @@ form button[type="submit"]:hover {
   }
 }
 
-/* Imagem temática no fundo */
 @media (max-width: 768px) {
   body {
     background-size: 180px;
@@ -181,6 +174,5 @@ form button[type="submit"]:hover {
   }
 }
 .main-content {
-  margin-left: 250px; /* Largura da sidebar fixa */
-  padding: 2rem;
-}
+  margin-left: 250px; 
+} */
