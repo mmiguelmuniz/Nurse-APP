@@ -1,0 +1,46 @@
+.estoque-page {
+  background: #f7fbfd;
+  min-height: 100vh;
+}
+
+/* título + busca */
+.estoque-actions input[type="search"] {
+  max-width: 240px;
+}
+
+/* abas */
+.estoque-tabs .nav-link {
+  font-weight: 700;
+  border: 0 !important;
+  color: #64748b;
+}
+.estoque-tabs .nav-link.active {
+  color: #0f172a !important;
+  background: transparent !important;
+  border-bottom: 3px solid #328bab !important;
+}
+
+/* tabela */
+.table-container {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, .06);
+  border: 1px solid rgba(2,6,23,.06);
+  overflow: hidden;
+}
+.table {
+  margin: 0;
+}
+.table thead th {
+  background: #f8fafc;
+  color: #334155;
+  border-bottom: 1px solid #e2e8f0;
+}
+.table td, .table th {
+  vertical-align: middle;
+}
+
+/* sombra suave para o banner */
+.shadow-xs {
+  box-shadow: 0 6px 16px rgba(2, 6, 23, 0.05);
+}

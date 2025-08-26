@@ -1,6 +1,4 @@
-/* === Layout geral === */
-
-/* Sidebar fixa à ESQUERDA em desktop, fluida no mobile */
+/* === Sidebar à ESQUERDA (desktop), fluida no mobile === */
 .sidebar {
   background-color: #328bab;
   color: white;
@@ -9,7 +7,6 @@
   z-index: 101;
 }
 
-/* Mobile: sidebar não fixa, ocupa a largura toda */
 @media (max-width: 767.98px) {
   .sidebar {
     position: relative;
@@ -18,36 +15,30 @@
   }
 }
 
-/* Desktop: fixa à ESQUERDA com 250px */
 @media (min-width: 768px) {
   .sidebar {
     position: fixed;
-    left: 0;          /* <- ESQUERDA */
-    right: auto;      /* <- garante que não vá pra direita */
+    left: 0;
+    right: auto;
     width: 250px;
     min-height: 100vh;
   }
 }
 
-/* Área principal dá espaço para a sidebar à ESQUERDA */
 .main-content {
-  margin: 0; /* mobile first */
+  margin: 0;
 }
-
 @media (min-width: 768px) {
   .main-content {
-    margin-left: 250px;   /* <- reserva espaço da sidebar esquerda */
-    margin-right: 0;
+    margin-left: 250px; /* reserva espaço da sidebar */
   }
 }
 
-/* Rodapé dentro da sidebar */
 .sidebar-footer {
   padding-top: 1rem;
   border-top: 1px solid rgba(255,255,255,0.2);
 }
 
-/* Links da sidebar */
 .sidebar .nav-link {
   color: white;
   font-weight: 500;
@@ -56,40 +47,10 @@
   font-size: 0.95rem;
   padding: 0.5rem 1rem;
 }
-
 .sidebar .nav-link:hover {
   background-color: rgba(255, 255, 255, 0.15);
   padding-left: 1.5rem;
   text-decoration: none;
-}
-
-/* === KPIs (estatísticas) === */
-.stat-card {
-  border-radius: 12px;
-  background: #fff;
-}
-
-.stat-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  background: rgba(50, 139, 171, 0.12);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-label {
-  font-size: 0.85rem;
-  color: #6b7886;
-  font-weight: 600;
-}
-
-.stat-value {
-  font-size: 1.4rem;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #1f2d3d;
 }
 
 /* === Topbar === */
@@ -106,7 +67,6 @@
   z-index: 100;
   width: 100%;
 }
-
 .topbar h5 {
   color: #007bff;
   margin: 0;
@@ -114,11 +74,140 @@
   font-size: 1.1rem;
 }
 
-/* Responsividade extra */
-@media (max-width: 576px) {
-  .topbar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+/* === Hover nos cards === */
+.hover-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.hover-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(0, 123, 255, 0.15);
+}
+
+/* === KPIs === */
+.stat-card {
+  border-radius: 12px;
+  background: #fff;
+}
+.stat-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: rgba(50, 139, 171, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.stat-label {
+  font-size: 0.85rem;
+  color: #6b7886;
+  font-weight: 600;
+}
+.stat-value {
+  font-size: 1.4rem;
+  line-height: 1.1;
+  font-weight: 800;
+  color: #1f2d3d;
+}
+
+/* Chips de filtro */
+.filter-chips { display: flex; gap: .5rem; }
+.chip {
+  background: #eef5f8;
+  border: 1px solid transparent;
+  padding: .4rem .8rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.chip:hover { background: #e3eef2; }
+.chip.active {
+  background: #328bab;
+  color: #fff;
+}
+
+/* Meta dos KPIs (Δ) */
+.stat-meta { margin-top: .15rem; font-size: .85rem; }
+.delta-badge {
+  display: inline-flex; align-items: center; gap: .25rem;
+  padding: .15rem .45rem; border-radius: 999px; font-weight: 700;
+}
+.delta-badge.up   { background: #e8f6ee; color: #1f8a4c; }   /* verde */
+.delta-badge.down { background: #fdeaea; color: #c03a2b; }   /* vermelho */
+
+/* === Skeletons (carregando) === */
+.skeleton { background: #f6f7f8; position: relative; overflow: hidden; }
+.skeleton::after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 0; left: -150px; height: 100%; width: 150px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: shimmer 1.2s infinite;
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* Linhas de skeleton nos widgets */
+.widget-skeleton-line {
+  height: 14px;
+  background: #f6f7f8;
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+}
+.widget-skeleton-line::after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 0; left: -150px; height: 100%; width: 150px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: shimmer 1.2s infinite;
+}
+
+/* === Widgets === */
+.card-header strong {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.card-footer {
+  border-top: 1px solid #eee;
+}
+
+/* Skeleton line para KPIs */
+.skeleton-line {
+  display: block;
+  background: #f0f0f0;
+  border-radius: 6px;
+  height: 20px;
+  width: 80px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-line.small {
+  height: 14px;
+  width: 50px;
+  margin-top: 6px;
+}
+
+/* Brilho animado */
+.skeleton-line::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150px;
+  height: 100%;
+  width: 150px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+  animation: shimmer 1.2s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(200%);
   }
 }
