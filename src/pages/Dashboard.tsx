@@ -224,7 +224,7 @@ const Dashboard: React.FC = () => {
                 <Card className="shadow-sm border-0 h-100">
                   <Card.Header className="bg-white d-flex align-items-center justify-content-between">
                     <strong>Estoque: itens críticos</strong>
-                    <AlertCircle size={18} className="text-warning" title="Abaixo do nível mínimo" />
+                    <AlertCircle size={18} className="text-warning"  />
                   </Card.Header>
                   <Card.Body>
                     {loading ? (

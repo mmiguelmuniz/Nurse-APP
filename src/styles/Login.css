@@ -1,0 +1,93 @@
+/* ===== Layout base ===== */
+.login-page {
+  position: fixed;
+  inset: 0;                 /* ocupa 100vw x 100vh */
+  width: 100vw;
+  height: 100vh;
+  background: #f7fbfd;
+  z-index: 10;              /* acima do layout padrão */
+  display: flex;            /* <<< garante as duas colunas */
+  flex-direction: column;   /* mobile: só card */
+}
+
+/* Desktop: duas colunas (banner | card) */
+@media (min-width: 992px) {
+  .login-page { flex-direction: row; }
+}
+
+/* ===== Coluna esquerda: banner ===== */
+.login-hero { display: none; } /* mobile: esconde banner */
+
+@media (min-width: 992px) {
+  .login-hero {
+    display: block;
+    flex: 0 0 58%;           /* 58% da largura */
+    min-height: 100vh;
+    background-repeat: no-repeat;
+    background-size: cover;  /* cobre toda a coluna */
+    background-position: left center;
+  }
+}
+
+/* ===== Coluna direita: container do card ===== */
+.login-container {
+  flex: 1 1 auto;                /* ocupa o restante (ou 42% no desktop) */
+  display: grid;
+  place-items: center;           /* centraliza o card */
+  min-height: 100vh;
+  background: #92d7ff;
+  position: relative;
+  z-index: 1;
+}
+
+/* Remover restrições de largura herdadas do layout global */
+.login-page .container,
+.login-page .container-fluid {
+  max-width: none;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+.login-page .row { margin: 0; }
+
+/* ===== Card ===== */
+.login-card {
+  width: 100%;
+  max-width: 420px;              /* garante largura visível */
+  min-width: 320px;
+  border-radius: 18px;
+  backdrop-filter: saturate(120%);
+}
+
+/* Logo */
+.login-logo {
+  height: 100px;
+  width: auto;
+}
+
+/* ===== Botão “Sign in with Google” ===== */
+.google-btn {
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  font-weight: 700;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  box-shadow: 0 6px 18px rgba(2, 6, 23, .06);
+}
+.google-btn:hover { background: #f8fafc; border-color: #dbe2ea; }
+.google-btn:active { transform: translateY(1px); }
+
+/* “G” (placeholder) */
+.g-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  border-radius: 4px;
+  font-weight: 900;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: conic-gradient(from 0deg, #ea4335 0 25%, #fbbc05 25% 50%, #34a853 50% 75%, #4285f4 75% 100%);
+  color: #fff;
+}

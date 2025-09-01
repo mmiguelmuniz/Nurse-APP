@@ -1,0 +1,25 @@
+.relatorios-page {
+  background: #f7fbfd;
+  min-height: 100vh;
+}
+
+/* Topbar */
+.rel-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px 12px;
+}
+.rel-logo { height: 28px; width: auto; }
+.rel-title { font-weight: 800; color: #0f172a; }
+
+/* KPI cards */
+.kpi-card { border-radius: 12px; }
+.kpi-label {
+  font-size: .9rem; color: #64748b; font-weight: 700; margin-bottom: .2rem;
+}
+.kpi-value {
+  font-size: 1.6rem; font-weight: 800; color: #0f172a; line-height: 1.1;
+}
