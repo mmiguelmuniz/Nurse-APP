@@ -1,97 +1,126 @@
-import 'bootstrap/dist/css/bootstrap.min.css'
-import '../styles/Estoque.css'
-import React, { useMemo, useState } from 'react'
-import { Container, Row, Col, Button, Form, Table, Badge, Tabs, Tab, Card } from 'react-bootstrap'
-import { Plus, Download, Upload, Pencil } from 'lucide-react'
+import 'bootstrap/dist/css/bootstrap.min.css';
+import '../styles/Estoque.css';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Container, Row, Col, Button, Form, Table, Badge, Tabs, Tab, Card } from 'react-bootstrap';
+import { Plus, Download, Upload, Pencil } from 'lucide-react';
+import api from '../lib/api';
 
-type Item = {
-  nome: string
-  unidade?: string     // ex.: cp, spray, gts…
-  estoque?: number     // mostraremos “—” enquanto não houver CRUD
-  minimo?: number
-  ultimaMov?: string
-}
+type Categoria = 'MEDICAMENTO' | 'CURATIVO';
 
-const MEDICAMENTOS_SEMENTE: Item[] = [
-  { nome: 'Acido mefenamico cp', unidade: 'cp' },
-  { nome: 'Aerolin spray', unidade: 'spray' },
-  { nome: 'Alivium gts', unidade: 'gts' },
-  { nome: 'Allegra 60mg' },
-  { nome: 'Allegra Sol' },
-  { nome: 'Buscopan simples' },
-  { nome: 'Buscopan composto' },
-  { nome: 'Desalex' },
-  { nome: 'Dipirona 500mg' },
-  { nome: 'Dipirona 1g' },
-  { nome: 'Dorflex' },
-  { nome: 'Enterogermina' },
-  { nome: 'Gastrogel' },
-  { nome: 'Ibuprofeno 400mg' },
-  { nome: 'Ibuprofeno 600mg' },
-  { nome: 'Loratadina' },
-  { nome: 'Luftal 125mg cp', unidade: 'cp' },
-  { nome: 'Luftal gts', unidade: 'gts' },
-  { nome: 'Neosaldina' },
-  { nome: 'Novalgina' },
-  { nome: 'Paracetamol 750mg' },
-  { nome: 'Predsim cp', unidade: 'cp' },
-  { nome: 'Predsim sol' },
-  { nome: 'Strepsils' },
-  { nome: 'Tylenol 500mg' },
-  { nome: 'Tylenol sol' },
-  { nome: 'Vonau 4mg' },
-  { nome: 'Vonau 8mg' },
-]
-
-const CURATIVOS_SEMENTE: Item[] = [
-  { nome: 'ABS' },
-  { nome: 'ATADURA' },
-  { nome: 'ABAIXADOR DE LINGUA' },
-  { nome: 'BANDAID' },
-  { nome: 'BEPANTOL' },
-  { nome: 'BRONQUIVITA' },
-  { nome: 'COLÍRIO' },
-  { nome: 'CRIOTERAPIA' },
-  { nome: 'ESPARADRAPO' },
-  { nome: 'GAZE' },
-  { nome: 'HIDROCORTISONA' },
-  { nome: 'HIPOGLOS' },
-  { nome: 'LENÇO UMEDECIDO' },
-  { nome: 'MASK' },
-  { nome: 'MASSAGEOL SPRAY' },
-  { nome: 'MASSAGEOL POMADA' },
-  { nome: 'MERTHIOLATE' },
-  { nome: 'MICROPORE' },
-  { nome: 'NEBACETIN' },
-  { nome: 'OLEO DE GIRASSOL' },
-  { nome: 'OMCILON' },
-  { nome: 'QUEIMADOL' },
-  { nome: 'REPARIL' },
-  { nome: 'REPELENTE' },
-  { nome: 'SF REFIL' },
-  { nome: 'SF' },
-  { nome: 'SPRAY DE PRÓPOLIS' },
-  { nome: 'TERMOTERAPIA' },
-  { nome: 'VICK' },
-]
+type ItemApi = {
+  id: string;
+  nome: string;
+  categoria: Categoria;
+  unidade: string;
+  minimo: number;
+  estoqueAtual: number;
+  active: boolean;
+  createdAt: string;
+};
 
 export default function Estoque() {
-  const [aba, setAba] = useState<'med' | 'cur'>('med')
-  const [busca, setBusca] = useState('')
+  const [aba, setAba] = useState<'med' | 'cur'>('med');
+  const [busca, setBusca] = useState('');
+  const [items, setItems] = useState<ItemApi[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [onlyCriticos, setOnlyCriticos] = useState(false);
 
-  const listaBruta = aba === 'med' ? MEDICAMENTOS_SEMENTE : CURATIVOS_SEMENTE
-  const lista = useMemo(
-    () =>
-      listaBruta.filter((i) =>
-        i.nome.toLowerCase().includes(busca.trim().toLowerCase()),
-      ),
-    [listaBruta, busca],
-  )
+  const categoriaAtual: Categoria = aba === 'med' ? 'MEDICAMENTO' : 'CURATIVO';
 
-  const handleNovoItem = () => alert('Novo item (UI) – CRUD entra depois.')
-  const handleEntrada = (nome: string) => alert(`Entrada de estoque: ${nome}`)
-  const handleSaida = (nome: string) => alert(`Saída/dispensa: ${nome}`)
-  const handleEditar = (nome: string) => alert(`Editar: ${nome}`)
+  async function load() {
+    setLoading(true);
+    try {
+      const { data } = await api.get<ItemApi[]>('/items', {
+        params: { categoria: categoriaAtual, ativos: true },
+      });
+      setItems(data || []);
+    } catch (e) {
+      console.error('Falha ao carregar itens:', e);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aba]);
+
+  const listaFiltrada = useMemo(() => {
+    const term = busca.trim().toLowerCase();
+    let base = items;
+    if (term) base = base.filter((i) => i.nome.toLowerCase().includes(term));
+    if (onlyCriticos) base = base.filter((i) => typeof i.minimo === 'number' && i.estoqueAtual < i.minimo);
+    return base;
+  }, [items, busca, onlyCriticos]);
+
+  const qtdCriticos = useMemo(
+    () => items.filter((i) => typeof i.minimo === 'number' && i.estoqueAtual < i.minimo).length,
+    [items]
+  );
+
+  async function handleNovoItem() {
+    const nome = prompt('Nome do item:');
+    if (!nome) return;
+    const unidade = prompt('Unidade (ex.: cp, ml, un):') || 'un';
+    const minimoStr = prompt('Estoque mínimo (número):') || '0';
+    const minimo = Number(minimoStr) || 0;
+    try {
+      await api.post('/items', {
+        nome,
+        categoria: categoriaAtual,
+        unidade,
+        minimo,
+        active: true,
+      });
+      await load();
+    } catch (e) {
+      alert('Falha ao criar item. Veja o console.');
+      console.error(e);
+    }
+  }
+
+  async function handleEntrada(it: ItemApi) {
+    const qtdStr = prompt(`Quantidade de ENTRADA para "${it.nome}":`, '10');
+    const quantidade = Number(qtdStr);
+    if (!quantidade || quantidade <= 0) return;
+    const motivo = prompt('Motivo (opcional):', 'Reposição');
+    try {
+      await api.post(`/items/${it.id}/entrada`, { quantidade, motivo });
+      await load();
+    } catch (e) {
+      alert('Falha ao registrar entrada.');
+      console.error(e);
+    }
+  }
+
+  async function handleSaida(it: ItemApi) {
+    const qtdStr = prompt(`Quantidade de SAÍDA para "${it.nome}":`, '1');
+    const quantidade = Number(qtdStr);
+    if (!quantidade || quantidade <= 0) return;
+    const motivo = prompt('Motivo (opcional):', 'Consumo manual');
+    try {
+      await api.post(`/items/${it.id}/saida`, { quantidade, motivo });
+      await load();
+    } catch (e) {
+      alert('Falha ao registrar saída.');
+      console.error(e);
+    }
+  }
+
+  async function handleEditar(it: ItemApi) {
+    const unidade = prompt('Unidade:', it.unidade || 'un') || it.unidade || 'un';
+    const minimoStr = prompt('Estoque mínimo:', String(it.minimo ?? 0)) || String(it.minimo ?? 0);
+    const minimo = Number(minimoStr) || 0;
+    try {
+      await api.patch(`/items/${it.id}`, { unidade, minimo });
+      await load();
+    } catch (e) {
+      alert('Falha ao editar item.');
+      console.error(e);
+    }
+  }
 
   return (
     <div className="estoque-page">
@@ -100,9 +129,7 @@ export default function Estoque() {
         <Row className="align-items-center g-2 mb-2">
           <Col xs={12} md>
             <h2 className="m-0">Estoque</h2>
-            <div className="text-muted small">
-              Medicamentos & Insumos (curativos)
-            </div>
+            <div className="text-muted small">Medicamentos & Insumos (curativos)</div>
           </Col>
           <Col xs={12} md="auto">
             <div className="d-flex gap-2 estoque-actions">
@@ -112,8 +139,9 @@ export default function Estoque() {
                 placeholder="Buscar item…"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
+                disabled={loading}
               />
-              <Button size="sm" variant="primary" onClick={handleNovoItem}>
+              <Button size="sm" variant="primary" onClick={handleNovoItem} disabled={loading}>
                 <Plus size={16} className="me-1" /> Novo item
               </Button>
             </div>
@@ -132,17 +160,23 @@ export default function Estoque() {
           <Tab eventKey="cur" title="Curativos" />
         </Tabs>
 
-        {/* Banner de alerta (placeholder) */}
+        {/* Banner de alerta */}
         <Card className="border-0 shadow-xs mb-3">
           <Card.Body className="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div className="d-flex align-items-center gap-2">
               <Badge bg="warning" text="dark">Atenção</Badge>
               <span className="text-muted">
-                Itens abaixo do mínimo: <strong>—</strong> 
+                Itens abaixo do mínimo:{' '}
+                <strong>{loading ? '...' : qtdCriticos}</strong>
               </span>
             </div>
-            <Button size="sm" variant="outline-secondary" disabled>
-              Ver itens críticos
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={() => setOnlyCriticos((v) => !v)}
+              disabled={loading || items.length === 0}
+            >
+              {onlyCriticos ? 'Ver todos' : 'Ver itens críticos'}
             </Button>
           </Card.Body>
         </Card>
@@ -161,31 +195,29 @@ export default function Estoque() {
               </tr>
             </thead>
             <tbody>
-              {lista.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-muted py-4">
-                    Nenhum item encontrado.
-                  </td>
+                  <td colSpan={6} className="text-center text-muted py-4">Carregando…</td>
+                </tr>
+              ) : listaFiltrada.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center text-muted py-4">Nenhum item encontrado.</td>
                 </tr>
               ) : (
-                lista.map((it) => (
-                  <tr key={it.nome}>
+                listaFiltrada.map((it) => (
+                  <tr key={it.id}>
                     <td className="fw-semibold">{it.nome}</td>
                     <td>{it.unidade || '—'}</td>
-                    <td>
-                      {/* Placeholder até ligar CRUD */}
-                      <span className="text-muted">—</span>
-                    </td>
-                    <td>
-                      <span className="text-muted">—</span>
-                    </td>
-                    <td className="text-muted">{it.ultimaMov || '—'}</td>
+                    <td>{typeof it.estoqueAtual === 'number' ? it.estoqueAtual : '—'}</td>
+                    <td>{typeof it.minimo === 'number' ? it.minimo : '—'}</td>
+                    <td className="text-muted">—{/* Poderemos exibir a última movimentação quando a API expor */}</td>
                     <td>
                       <div className="d-flex gap-2 flex-wrap">
                         <Button
                           size="sm"
                           variant="outline-success"
-                          onClick={() => handleEntrada(it.nome)}
+                          onClick={() => handleEntrada(it)}
+                          disabled={loading}
                         >
                           <Upload size={16} className="me-1" />
                           Entrada
@@ -193,7 +225,8 @@ export default function Estoque() {
                         <Button
                           size="sm"
                           variant="outline-danger"
-                          onClick={() => handleSaida(it.nome)}
+                          onClick={() => handleSaida(it)}
+                          disabled={loading}
                         >
                           <Download size={16} className="me-1" />
                           Saída
@@ -201,7 +234,8 @@ export default function Estoque() {
                         <Button
                           size="sm"
                           variant="outline-secondary"
-                          onClick={() => handleEditar(it.nome)}
+                          onClick={() => handleEditar(it)}
+                          disabled={loading}
                         >
                           <Pencil size={16} className="me-1" />
                           Editar
@@ -215,21 +249,17 @@ export default function Estoque() {
           </Table>
         </div>
 
-        {/* Paginação (placeholder) */}
+        {/* Paginação (opcional, a API suporta mas aqui carregamos tudo por categoria) */}
         <div className="d-flex justify-content-between align-items-center mt-3">
           <div className="text-muted small">
-            Mostrando {lista.length} itens
+            Mostrando {loading ? '...' : listaFiltrada.length} itens
           </div>
           <div className="d-flex gap-2">
-            <Button size="sm" variant="outline-secondary" disabled>
-              Anterior
-            </Button>
-            <Button size="sm" variant="outline-secondary" disabled>
-              Próximo
-            </Button>
+            <Button size="sm" variant="outline-secondary" disabled>Anterior</Button>
+            <Button size="sm" variant="outline-secondary" disabled>Próximo</Button>
           </div>
         </div>
       </Container>
     </div>
-  )
+  );
 }

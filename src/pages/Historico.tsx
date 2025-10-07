@@ -1,114 +1,177 @@
-import 'bootstrap/dist/css/bootstrap.min.css'
-import '../styles/Historico.css'
-import React, { useMemo, useState } from 'react'
+import 'bootstrap/dist/css/bootstrap.min.css';
+import '../styles/Historico.css';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Container, Row, Col, Card, Button, Form, Table, Badge, Modal
-} from 'react-bootstrap'
-import { Search, Filter, Download, Info, Printer } from 'lucide-react'
-import logoImg from '../assets/EAR.png'
+} from 'react-bootstrap';
+import { Search, Filter, Download, Info, Printer } from 'lucide-react';
+import logoImg from '../assets/ss.png';
+import api from '../lib/api';
 
 type Registro = {
-  id: string
-  dataISO: string         // ex.: 2025-03-10T10:15:00Z
-  hora: string            // HH:mm para exibir
-  nome: string
-  vinculo: string
-  funcao: string
-  turma: string
-  motivo: string
-  destino: string         // HOSPITAL => emergência
-  comunicacao?: string
-  observacao?: string
+  id: string;
+  dataISO: string;     // createdAt
+  hora: string;        // derivado
+  nome: string;
+  vinculo: string;
+  funcao: string;
+  turma: string;
+  motivo: string;
+  destino: string;
+  comunicacao?: string;
+  observacao?: string;
+};
+
+const funcoes = ['Todos','Aluno','Funcionário','Teacher','TA','ADM','Nurse','Office','Psi','TI','RH','Special'];
+const turmas  = ['Todas','NURSERY A','NURSERY B','PK 3 A','PK 4 A','KINDER A','1st A','1st B','2nd A','3rd A','4th A','5th A','6th','7th','8th','9th','10th','11th','12th','—'];
+const motivos = ['Todos','Febre','Cefaleia','Corte superficial','Dor de cabeça','Dor de ouvido','Náusea','Alergia','Outros'];
+
+// helpers
+function toHoraBR(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
+function mapAttendanceToRegistro(a: any): Registro {
+  const turma =
+    a.class?.name ?? a.className ?? a.turma ?? '—';
+  const motivo =
+    a.motivo?.name ?? a.reason?.name ?? a.motivo ?? a.reason ?? '—';
+  const comunicacao =
+    a.comunicacao?.name ?? a.communication?.name ?? a.comunicacao ?? a.communication ?? undefined;
 
-/* ===== MOCK – trocar por API/SQL quando o CRUD estiver pronto ===== */
-const MOCK: Registro[] = [
-  { id: '1', dataISO: new Date().toISOString(), hora: '08:15', nome: 'Ana S.',  vinculo:'Aluno', funcao:'Aluno', turma:'5th A', motivo:'Febre', destino:'HOME', comunicacao:'WHATSAPP' },
-  { id: '2', dataISO: new Date().toISOString(), hora: '09:40', nome: 'João P.', vinculo:'Aluno', funcao:'Aluno', turma:'7th',   motivo:'Corte superficial', destino:'DISMISS' },
-  { id: '3', dataISO: new Date().toISOString(), hora: '10:05', nome: 'Maria V.',vinculo:'Aluno', funcao:'Aluno', turma:'9th',   motivo:'Cefaleia', destino:'OFFICE/ Special' },
-  { id: '4', dataISO: new Date().toISOString(), hora: '11:20', nome: 'Lucas R.',vinculo:'Aluno', funcao:'Aluno', turma:'6th',   motivo:'Náusea', destino:'HOSPITAL', comunicacao:'CALL' },
-]
+  const dataISO = a.createdAt ?? a.dataISO ?? new Date().toISOString();
 
-const funcoes = ['Todos','Aluno','Funcionário','Teacher','TA','ADM','Nurse','Office','Psi','TI','RH','Special']
-const turmas  = ['Todas','NURSERY A','NURSERY B','PK 3 A','PK 4 A','KINDER A','1st A','1st B','2nd A','3rd A','4th A','5th A','6th','7th','8th','9th','10th','11th','12th','—']
-const motivos = ['Todos','Febre','Cefaleia','Corte superficial','Dor de cabeça','Dor de ouvido','Náusea','Alergia','Outros']
+  return {
+    id: a.id,
+    dataISO,
+    hora: toHoraBR(dataISO),
+    nome: a.nome ?? a.name ?? '—',
+    vinculo: a.vinculo ?? '—',
+    funcao: a.funcao ?? '—',
+    turma,
+    motivo,
+    destino: a.destino ?? '—',
+    comunicacao,
+    observacao: a.descricao ?? a.observacao ?? undefined,
+  };
+}
 
 export default function Historico() {
   // Busca & filtros
-  const [q, setQ] = useState('')
-  const [funcao, setFuncao] = useState('Todos')
-  const [turma, setTurma] = useState('Todas')
-  const [motivo, setMotivo] = useState('Todos')
-  const [soEmergencia, setSoEmergencia] = useState(false)
-  const [dtIni, setDtIni] = useState<string>('') // yyyy-mm-dd
-  const [dtFim, setDtFim] = useState<string>('') // yyyy-mm-dd
+  const [q, setQ] = useState('');
+  const [funcao, setFuncao] = useState('Todos');
+  const [turma, setTurma] = useState('Todas');
+  const [motivo, setMotivo] = useState('Todos');
+  const [soEmergencia, setSoEmergencia] = useState(false);
+  const [dtIni, setDtIni] = useState<string>(''); // yyyy-mm-dd
+  const [dtFim, setDtFim] = useState<string>(''); // yyyy-mm-dd
+
+  // Paginação
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState<number | null>(null);
+
+  // Dados
+  const [registros, setRegistros] = useState<Registro[]>([]);
+  const [loading, setLoading] = useState(false);
 
   // Modal de detalhes
-  const [detalhe, setDetalhe] = useState<Registro | null>(null)
+  const [detalhe, setDetalhe] = useState<Registro | null>(null);
 
-  // Lista filtrada
-  const lista = useMemo(() => {
-    const inicio = dtIni ? new Date(dtIni + 'T00:00:00') : null
-    const fim    = dtFim ? new Date(dtFim + 'T23:59:59') : null
+  // Carregar do backend sempre que filtros/página mudarem
+  useEffect(() => {
+    let canceled = false;
+    (async () => {
+      try {
+        setLoading(true);
 
-    return MOCK.filter((r) => {
-      const txt = (r.nome + ' ' + r.motivo + ' ' + r.turma + ' ' + r.funcao).toLowerCase()
-      const passTxt = q.trim() === '' || txt.includes(q.toLowerCase())
+        const params: any = {
+          page,
+          pageSize,
+        };
+        if (q.trim()) params.busca = q.trim();
+        if (funcao !== 'Todos') params.funcao = funcao;
+        if (turma !== 'Todas') params.turma = turma;
+        if (motivo !== 'Todos') params.motivo = motivo;
+        if (soEmergencia) params.emergencia = true;
+        if (dtIni) params.start = dtIni;
+        if (dtFim) params.end = dtFim;
 
-      const passFunc = funcao === 'Todos' || r.funcao === funcao
-      const passTur  = turma === 'Todas' || r.turma === turma
-      const passMot  = motivo === 'Todos' || r.motivo === motivo
+        const { data } = await api.get('/attendances', { params });
 
-      const isEmerg = r.destino?.toUpperCase() === 'HOSPITAL'
-      const passEmerg = !soEmergencia || isEmerg
+        // Aceita dois formatos: array puro OU objeto com {items,total,...}
+        const items: any[] = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
+        const totalServer: number | null = Array.isArray(data) ? null : (data.total ?? null);
 
-      const t = new Date(r.dataISO).getTime()
-      const passIni = !inicio || t >= +inicio
-      const passFim = !fim || t <= +fim
+        const mapped = items.map(mapAttendanceToRegistro);
+        if (!canceled) {
+          setRegistros(mapped);
+          setTotal(totalServer);
+        }
+      } catch (e) {
+        console.error('Falha ao carregar histórico:', e);
+        if (!canceled) {
+          setRegistros([]);
+          setTotal(null);
+        }
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    })();
 
-      return passTxt && passFunc && passTur && passMot && passEmerg && passIni && passFim
-    }).sort((a,b) => +new Date(b.dataISO) - +new Date(a.dataISO))
-  }, [q, funcao, turma, motivo, soEmergencia, dtIni, dtFim])
+    return () => { canceled = true; };
+  }, [q, funcao, turma, motivo, soEmergencia, dtIni, dtFim, page, pageSize]);
+
+  // Resetar página quando filtros mudarem
+  useEffect(() => {
+    setPage(1);
+  }, [q, funcao, turma, motivo, soEmergencia, dtIni, dtFim]);
+
+  // Lista (já vem filtrada do backend; manteremos ordenação por data desc no front por garantia)
+  const lista = useMemo(
+    () => [...registros].sort((a, b) => +new Date(b.dataISO) - +new Date(a.dataISO)),
+    [registros]
+  );
 
   const badgeDestino = (d: string) => {
-    const up = d?.toUpperCase() || ''
-    if (up === 'HOSPITAL') return <Badge bg="danger">Emergência</Badge>
-    if (up === 'HOME')     return <Badge bg="secondary">Casa</Badge>
-    if (up.startsWith('OFFICE')) return <Badge bg="info">Office/Special</Badge>
-    if (up === 'DISMISS')  return <Badge bg="warning" text="dark">Dismiss</Badge>
-    return <Badge bg="light" text="dark">{d || '—'}</Badge>
-  }
+    const up = d?.toUpperCase() || '';
+    if (up === 'HOSPITAL') return <Badge bg="danger">Emergência</Badge>;
+    if (up === 'HOME')     return <Badge bg="secondary">Casa</Badge>;
+    if (up.startsWith('OFFICE')) return <Badge bg="info">Office/Special</Badge>;
+    if (up === 'DISMISS')  return <Badge bg="warning" text="dark">Dismiss</Badge>;
+    return <Badge bg="light" text="dark">{d || '—'}</Badge>;
+  };
 
-  /* ==== Export CSV real dos registros filtrados ==== */
+  /* ==== Export CSV (dos registros atuais) ==== */
   const exportarCSV = () => {
-    const headers = ['Data','Hora','Nome','Vínculo','Função','Turma','Motivo','Destino','Comunicação','Observação']
+    const headers = ['Data','Hora','Nome','Vínculo','Função','Turma','Motivo','Destino','Comunicação','Observação'];
     const rows = lista.map(r => ([
       new Date(r.dataISO).toLocaleDateString('pt-BR'),
       r.hora || new Date(r.dataISO).toTimeString().slice(0,5),
       r.nome, r.vinculo, r.funcao, r.turma || '',
       r.motivo, r.destino, r.comunicacao || '', r.observacao || ''
-    ]))
+    ]));
 
     const encode = (s: any) => {
-      const v = String(s ?? '')
-      return /[",;\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v
-    }
+      const v = String(s ?? '');
+      return /[",;\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
+    };
 
-    const csv = [headers, ...rows].map(cols => cols.map(encode).join(';')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `historico_${new Date().toISOString().slice(0,10)}.csv`
-    document.body.appendChild(a); a.click(); a.remove()
-    URL.revokeObjectURL(url)
-  }
+    const csv = [headers, ...rows].map(cols => cols.map(encode).join(';')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `historico_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   /* ==== Imprimir / PDF de um registro ==== */
   const imprimirRegistro = (reg: Registro) => {
-    const w = window.open('', '_blank', 'width=800,height=900')
-    if (!w) return
-    const ds = new Date(reg.dataISO).toLocaleString('pt-BR')
+    const w = window.open('', '_blank', 'width=800,height=900');
+    if (!w) return;
+    const ds = new Date(reg.dataISO).toLocaleString('pt-BR');
     w.document.write(`
       <html>
         <head>
@@ -162,9 +225,9 @@ export default function Historico() {
           <script>window.onload = () => setTimeout(() => window.print(), 50)</script>
         </body>
       </html>
-    `)
-    w.document.close()
-  }
+    `);
+    w.document.close();
+  };
 
   return (
     <div className="historico-page">
@@ -187,7 +250,7 @@ export default function Historico() {
           </Col>
           <Col xs={12} md="auto">
             <div className="d-flex gap-2 flex-wrap">
-              <Button size="sm" variant="outline-secondary" onClick={exportarCSV}>
+              <Button size="sm" variant="outline-secondary" onClick={exportarCSV} disabled={loading || lista.length === 0}>
                 <Download size={16} className="me-1" /> Exportar CSV
               </Button>
             </div>
@@ -205,25 +268,26 @@ export default function Historico() {
                     placeholder="Nome, motivo, turma…"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
+                    disabled={loading}
                   />
                   <span className="btn-search"><Search size={18} /></span>
                 </div>
               </Col>
               <Col sm={6} lg={2}>
                 <Form.Label>Função</Form.Label>
-                <Form.Select value={funcao} onChange={(e)=>setFuncao(e.target.value)}>
+                <Form.Select value={funcao} onChange={(e)=>setFuncao(e.target.value)} disabled={loading}>
                   {funcoes.map(f => <option key={f}>{f}</option>)}
                 </Form.Select>
               </Col>
               <Col sm={6} lg={2}>
                 <Form.Label>Turma</Form.Label>
-                <Form.Select value={turma} onChange={(e)=>setTurma(e.target.value)}>
+                <Form.Select value={turma} onChange={(e)=>setTurma(e.target.value)} disabled={loading}>
                   {turmas.map(t => <option key={t}>{t}</option>)}
                 </Form.Select>
               </Col>
               <Col sm={6} lg={2}>
                 <Form.Label>Motivo</Form.Label>
-                <Form.Select value={motivo} onChange={(e)=>setMotivo(e.target.value)}>
+                <Form.Select value={motivo} onChange={(e)=>setMotivo(e.target.value)} disabled={loading}>
                   {motivos.map(m => <option key={m}>{m}</option>)}
                 </Form.Select>
               </Col>
@@ -235,6 +299,7 @@ export default function Historico() {
                   label="Só emergências"
                   checked={soEmergencia}
                   onChange={(e)=>setSoEmergencia(e.target.checked)}
+                  disabled={loading}
                 />
               </Col>
             </Row>
@@ -242,16 +307,16 @@ export default function Historico() {
             <Row className="g-2 mt-1">
               <Col sm={6} md={3}>
                 <Form.Label>De</Form.Label>
-                <Form.Control type="date" value={dtIni} onChange={(e)=>setDtIni(e.target.value)} />
+                <Form.Control type="date" value={dtIni} onChange={(e)=>setDtIni(e.target.value)} disabled={loading} />
               </Col>
               <Col sm={6} md={3}>
                 <Form.Label>Até</Form.Label>
-                <Form.Control type="date" value={dtFim} onChange={(e)=>setDtFim(e.target.value)} />
+                <Form.Control type="date" value={dtFim} onChange={(e)=>setDtFim(e.target.value)} disabled={loading} />
               </Col>
               <Col md="auto" className="align-self-end">
                 <Button size="sm" variant="outline-secondary" onClick={()=>{
-                  setQ(''); setFuncao('Todos'); setTurma('Todas'); setMotivo('Todos'); setSoEmergencia(false); setDtIni(''); setDtFim('');
-                }}>
+                  setQ(''); setFuncao('Todos'); setTurma('Todas'); setMotivo('Todos'); setSoEmergencia(false); setDtIni(''); setDtFim(''); setPage(1);
+                }} disabled={loading}>
                   <Filter size={16} className="me-1" /> Limpar filtros
                 </Button>
               </Col>
@@ -275,7 +340,9 @@ export default function Historico() {
               </tr>
             </thead>
             <tbody>
-              {lista.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={8} className="text-center text-muted py-4">Carregando…</td></tr>
+              ) : lista.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center text-muted py-4">
                     Nenhum registro encontrado.
@@ -283,8 +350,8 @@ export default function Historico() {
                 </tr>
               ) : (
                 lista.map((r) => {
-                  const d = new Date(r.dataISO)
-                  const ds = d.toLocaleDateString('pt-BR')
+                  const d = new Date(r.dataISO);
+                  const ds = d.toLocaleDateString('pt-BR');
                   return (
                     <tr key={r.id}>
                       <td>{ds}</td>
@@ -305,19 +372,39 @@ export default function Historico() {
                         </div>
                       </td>
                     </tr>
-                  )
+                  );
                 })
               )}
             </tbody>
           </Table>
         </div>
 
-        {/* Paginação (placeholder) */}
+        {/* Paginação */}
         <div className="d-flex justify-content-between align-items-center mt-3">
-          <div className="text-muted small">Mostrando {lista.length} registros</div>
+          <div className="text-muted small">
+            {loading
+              ? 'Carregando…'
+              : total != null
+                ? `Mostrando ${lista.length} registros (pág. ${page}) de ${total}`
+                : `Mostrando ${lista.length} registros`}
+          </div>
           <div className="d-flex gap-2">
-            <Button size="sm" variant="outline-secondary" disabled>Anterior</Button>
-            <Button size="sm" variant="outline-secondary" disabled>Próximo</Button>
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={loading || page === 1}
+            >
+              Anterior
+            </Button>
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={() => setPage(p => p + 1)}
+              disabled={loading || (total != null && lista.length < pageSize)}
+            >
+              Próximo
+            </Button>
           </div>
         </div>
       </Container>
@@ -347,5 +434,5 @@ export default function Historico() {
         </Modal.Footer>
       </Modal>
     </div>
-  )
+  );
 }

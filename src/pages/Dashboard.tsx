@@ -1,8 +1,8 @@
-import 'bootstrap/dist/css/bootstrap.min.css'
-import '../styles/Dashboard.css'
-import logoImg from '../assets/EAR.png'
-import React, { useEffect, useState } from 'react'
-import { Container, Row, Col, Card, Button, Table } from 'react-bootstrap'
+import 'bootstrap/dist/css/bootstrap.min.css';
+import '../styles/Dashboard.css';
+import logoImg from '../assets/EAR.png';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Container, Row, Col, Card, Button, Table } from 'react-bootstrap';
 import {
   LogOut,
   FileText,
@@ -11,66 +11,152 @@ import {
   Package,
   Activity,
   AlertTriangle,
-  AlertCircle
-} from 'lucide-react'
+  AlertCircle,
+} from 'lucide-react';
+import api from '../lib/api';
 
-type Periodo = 'hoje' | 'semana' | 'mes'
+type Periodo = 'hoje' | 'semana' | 'mes';
 
 type Stats = {
-  atendimentosHoje: number
-  atendimentosSemana: number
-  estoqueMedicamentos: number
-  emergenciasHoje: number
-  deltaAtendimentos: number // variação % vs período anterior
-  deltaEmergencias: number  // variação % vs período anterior
+  atendimentosHoje: number;     // valor do período selecionado quando 'hoje'
+  atendimentosSemana: number;   // sempre o KPI da semana
+  estoqueMedicamentos: number;  // soma do estoqueAtual (categoria MEDICAMENTO)
+  emergenciasHoje: number;      // emergências do período selecionado
+  // deltas por enquanto ficam em 0 (podemos calcular depois com séries)
+  deltaAtendimentos?: number;
+  deltaEmergencias?: number;
+};
+
+type ItemCritico = { id: string; nome: string; estoqueAtual: number };
+type AtendimentoDia = { hora: string; nome: string; motivo: string; emergencia?: boolean };
+
+// helpers
+function isoDate(d: Date) {
+  // YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
 }
-
-type ItemCritico = { nome: string; saldo: number }
-type AtendimentoDia = { hora: string; nome: string; motivo: string; emergencia?: boolean }
-
-// MOCK: números por período (trocar por API depois)
-const STATS_BY_PERIOD: Record<Periodo, Stats> = {
-  hoje:   { atendimentosHoje: 7,  atendimentosSemana: 32, estoqueMedicamentos: 148, emergenciasHoje: 1,  deltaAtendimentos: +8,  deltaEmergencias: -50 },
-  semana: { atendimentosHoje: 0,  atendimentosSemana: 32, estoqueMedicamentos: 148, emergenciasHoje: 4,  deltaAtendimentos: +12, deltaEmergencias: -20 },
-  mes:    { atendimentosHoje: 0,  atendimentosSemana: 0,  estoqueMedicamentos: 148, emergenciasHoje: 17, deltaAtendimentos: +5,  deltaEmergencias: +10 },
+function hojeRange() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 1); // amanhã (exclusive)
+  return { start: isoDate(start), end: isoDate(end) };
 }
-
-// MOCK: widgets (trocar por API depois)
-const ITENS_CRITICOS: ItemCritico[] = [
-  { nome: 'Dipirona 500 mg', saldo: 8 },
-  { nome: 'Soro Fisiológico 0,9%', saldo: 3 },
-  { nome: 'Gaze estéril', saldo: 0 },
-  { nome: 'Paracetamol 750 mg', saldo: 5 },
-]
-
-const ATENDIMENTOS_HOJE: AtendimentoDia[] = [
-  { hora: '08:15', nome: 'Ana S.', motivo: 'Febre' },
-  { hora: '09:40', nome: 'João P.', motivo: 'Corte' },
-  { hora: '10:05', nome: 'Maria V.', motivo: 'Cefaleia' },
-  { hora: '11:20', nome: 'Lucas R.', motivo: 'Náusea', emergencia: true },
-]
+function horaBR(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
 
 const Dashboard: React.FC = () => {
-  const userName = 'Virginia' // TODO: substituir por autenticação Google futuramente
+  const userName = 'Usuário'; // TODO: trocar por /users/me quando quiser
 
-  // Filtro de período
-  const [periodo, setPeriodo] = useState<Periodo>('hoje')
+  const [periodo, setPeriodo] = useState<Periodo>('hoje');
 
-  // Estados de KPI
-  const [loading, setLoading] = useState(true)
-  const [stats, setStats] = useState<Stats>(STATS_BY_PERIOD['hoje'])
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<Stats>({
+    atendimentosHoje: 0,
+    atendimentosSemana: 0,
+    estoqueMedicamentos: 0,
+    emergenciasHoje: 0,
+    deltaAtendimentos: 0,
+    deltaEmergencias: 0,
+  });
 
-  // Loading simulado ao trocar período
+  const [itensCriticos, setItensCriticos] = useState<ItemCritico[]>([]);
+  const [atendimentosHoje, setAtendimentosHoje] = useState<AtendimentoDia[]>([]);
+
+  const labelAtendimentos = useMemo(
+    () => (periodo === 'hoje' ? 'Atendimentos (hoje)' : 'Atendimentos'),
+    [periodo]
+  );
+  const labelEmergencias = useMemo(
+    () => (periodo === 'hoje' ? 'Emergências (hoje)' : 'Emergências'),
+    [periodo]
+  );
+
   useEffect(() => {
-    setLoading(true)
-    const t = setTimeout(() => {
-      setStats(STATS_BY_PERIOD[periodo])
-      setLoading(false)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [periodo])
+    let canceled = false;
+    (async () => {
+      try {
+        setLoading(true);
 
-  // Componente de KPI
+        // 1) KPIs do período selecionado
+        const kpiPeriodoPromise = api.get('/metrics/kpis', { params: { period: periodo } });
+
+        // 2) KPI fixo para "Atendimentos (semana)"
+        const kpiSemanaPromise = api.get('/metrics/kpis', { params: { period: 'semana' } });
+
+        // 3) Itens críticos (lista)
+        const criticosPromise = api.get<ItemCritico[]>('/items/criticos');
+
+        // 4) Soma de estoque de medicamentos
+        const medsPromise = api.get<any[]>('/items', {
+          params: { categoria: 'MEDICAMENTO', ativos: true },
+        });
+
+        // 5) Últimos atendimentos de hoje
+        const { start, end } = hojeRange();
+        const atendsPromise = api.get<any[]>('/attendances', {
+          params: { start, end, pageSize: 10 },
+        });
+
+        const [kpiPeriodoRes, kpiSemanaRes, criticosRes, medsRes, atendsRes] = await Promise.all([
+          kpiPeriodoPromise,
+          kpiSemanaPromise,
+          criticosPromise,
+          medsPromise,
+          atendsPromise,
+        ]);
+
+        if (canceled) return;
+
+        const kpiPeriodo = kpiPeriodoRes.data as {
+          atendimentos: number;
+          emergencias: number;
+          itensCriticos: number;
+        };
+        const kpiSemana = (kpiSemanaRes.data as any).atendimentos as number;
+
+        const itensCriticosData: ItemCritico[] = (criticosRes.data || []).map((i: any) => ({
+          id: i.id,
+          nome: i.nome,
+          estoqueAtual: i.estoqueAtual,
+        }));
+
+        const estoqueMedicamentosSoma: number = (medsRes.data || []).reduce(
+          (sum: number, it: any) => sum + (Number(it.estoqueAtual) || 0),
+          0
+        );
+
+        const atendimentosHojeData: AtendimentoDia[] = (atendsRes.data || []).map((a: any) => ({
+          hora: horaBR(a.createdAt),
+          nome: a.nome,
+          motivo: a.motivo?.name || '—',
+          emergencia: typeof a.destino === 'string' && a.destino.toLowerCase().includes('emerg'),
+        }));
+
+        setStats({
+          atendimentosHoje: kpiPeriodo.atendimentos,
+          atendimentosSemana: kpiSemana,
+          estoqueMedicamentos: estoqueMedicamentosSoma,
+          emergenciasHoje: kpiPeriodo.emergencias,
+          deltaAtendimentos: 0, // TODO: calcular com séries, se quiser
+          deltaEmergencias: 0,  // TODO: calcular com séries, se quiser
+        });
+        setItensCriticos(itensCriticosData);
+        setAtendimentosHoje(atendimentosHojeData);
+      } catch (e) {
+        console.error('Falha ao carregar dashboard:', e);
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [periodo]);
+
   const StatCard = ({
     icon,
     label,
@@ -78,11 +164,11 @@ const Dashboard: React.FC = () => {
     delta,
     showDelta = false,
   }: {
-    icon: React.ReactNode
-    label: string
-    value: number
-    delta?: number
-    showDelta?: boolean
+    icon: React.ReactNode;
+    label: string;
+    value: number;
+    delta?: number;
+    showDelta?: boolean;
   }) => (
     <Card className={`stat-card h-100 shadow-sm border-0 ${loading ? 'skeleton' : ''}`}>
       <Card.Body className="d-flex align-items-center gap-3">
@@ -90,29 +176,28 @@ const Dashboard: React.FC = () => {
         <div className="d-flex flex-column">
           <span className="stat-label">{label}</span>
           {loading ? (
-          <span className="stat-value skeleton-line"></span>
+            <span className="stat-value skeleton-line"></span>
           ) : (
-          <span className="stat-value">{value.toLocaleString('pt-BR')}</span>
+            <span className="stat-value">{Number(value || 0).toLocaleString('pt-BR')}</span>
           )}
-        {showDelta && (
-  loading ? (
-    <span className="stat-meta skeleton-line small"></span>
-  ) : (
-    <span className="stat-meta">
-      <span className={`delta-badge ${delta! >= 0 ? 'up' : 'down'}`}>
-        {delta! >= 0 ? '↑' : '↓'} {Math.abs(delta!)}%
-      </span>
-    </span>
-  ))}
+          {showDelta && (
+            loading ? (
+              <span className="stat-meta skeleton-line small"></span>
+            ) : (
+              <span className="stat-meta">
+                <span className={`delta-badge ${Number(delta) >= 0 ? 'up' : 'down'}`}>
+                  {Number(delta) >= 0 ? '↑' : '↓'} {Math.abs(Number(delta) || 0)}%
+                </span>
+              </span>
+            )
+          )}
         </div>
       </Card.Body>
     </Card>
-  )
-
+  );
 
   return (
     <div className="d-flex flex-column min-vh-100">
-      {/* Conteúdo principal */}
       <div className="main-content">
         <div className="flex-grow-1 d-flex flex-column dashboard-content">
           {/* Topbar */}
@@ -142,10 +227,10 @@ const Dashboard: React.FC = () => {
               <Col xs={12} md={6} lg={3}>
                 <StatCard
                   icon={<Activity size={22} aria-label="Atendimentos" />}
-                  label={periodo === 'hoje' ? 'Atendimentos (hoje)' : 'Atendimentos'}
-                  value={periodo === 'hoje' ? stats.atendimentosHoje : stats.atendimentosSemana}
+                  label={labelAtendimentos}
+                  value={periodo === 'hoje' ? stats.atendimentosHoje : stats.atendimentosHoje} // mostra o do período
                   delta={stats.deltaAtendimentos}
-                  showDelta
+                  showDelta={false} // ativaremos quando calcularmos séries
                 />
               </Col>
               <Col xs={12} md={6} lg={3}>
@@ -165,10 +250,10 @@ const Dashboard: React.FC = () => {
               <Col xs={12} md={6} lg={3}>
                 <StatCard
                   icon={<AlertTriangle size={22} aria-label="Emergências" />}
-                  label={periodo === 'hoje' ? 'Emergências (hoje)' : 'Emergências'}
+                  label={labelEmergencias}
                   value={stats.emergenciasHoje}
                   delta={stats.deltaEmergencias}
-                  showDelta
+                  showDelta={false} // idem
                 />
               </Col>
             </Row>
@@ -197,7 +282,7 @@ const Dashboard: React.FC = () => {
                       📂 <span>Histórico</span>
                     </Card.Title>
                     <Card.Text>Visualize atendimentos anteriores</Card.Text>
-                    <Button variant="primary">Visualizar</Button>
+                    <Button variant="primary" href="/historico">Visualizar</Button>
                   </Card.Body>
                 </Card>
               </Col>
@@ -209,7 +294,7 @@ const Dashboard: React.FC = () => {
                       📊 <span>Relatórios</span>
                     </Card.Title>
                     <Card.Text>Gere gráficos e relatórios personalizados</Card.Text>
-                    <Button variant="primary">Acessar</Button>
+                    <Button variant="primary" href="/relatorios">Acessar</Button>
                   </Card.Body>
                 </Card>
               </Col>
@@ -224,7 +309,7 @@ const Dashboard: React.FC = () => {
                 <Card className="shadow-sm border-0 h-100">
                   <Card.Header className="bg-white d-flex align-items-center justify-content-between">
                     <strong>Estoque: itens críticos</strong>
-                    <AlertCircle size={18} className="text-warning"  />
+                    <AlertCircle size={18} className="text-warning" />
                   </Card.Header>
                   <Card.Body>
                     {loading ? (
@@ -233,22 +318,22 @@ const Dashboard: React.FC = () => {
                           <li key={i} className="widget-skeleton-line mb-2" />
                         ))}
                       </ul>
-                    ) : ITENS_CRITICOS.length === 0 ? (
+                    ) : itensCriticos.length === 0 ? (
                       <div className="text-success">Sem itens críticos 🎉</div>
                     ) : (
                       <ul className="list-unstyled m-0">
-                        {ITENS_CRITICOS.map((item) => (
-                          <li key={item.nome} className="d-flex justify-content-between py-2 border-bottom">
+                        {itensCriticos.map((item) => (
+                          <li key={item.id} className="d-flex justify-content-between py-2 border-bottom">
                             <span>{item.nome}</span>
-                            <span className="badge bg-danger-subtle text-danger fw-bold">↓ {item.saldo}</span>
+                            <span className="badge bg-danger-subtle text-danger fw-bold">↓ {item.estoqueAtual}</span>
                           </li>
                         ))}
                       </ul>
                     )}
                   </Card.Body>
                   <Card.Footer className="bg-white d-flex gap-2">
-                    <Button variant="outline-secondary" size="sm">Ver estoque</Button>
-                    <Button variant="outline-primary" size="sm">Registrar saída</Button>
+                    <Button variant="outline-secondary" size="sm" href="/medicamentos">Ver estoque</Button>
+                    <Button variant="outline-primary" size="sm" href="/medicamentos">Registrar saída</Button>
                   </Card.Footer>
                 </Card>
               </Col>
@@ -266,7 +351,7 @@ const Dashboard: React.FC = () => {
                           <div key={i} className="widget-skeleton-line mb-2" />
                         ))}
                       </div>
-                    ) : ATENDIMENTOS_HOJE.length === 0 ? (
+                    ) : atendimentosHoje.length === 0 ? (
                       <div className="p-3 text-muted">Sem registros hoje.</div>
                     ) : (
                       <Table responsive hover className="m-0">
@@ -279,7 +364,7 @@ const Dashboard: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {ATENDIMENTOS_HOJE.map((a, idx) => (
+                          {atendimentosHoje.map((a, idx) => (
                             <tr key={`${a.hora}-${idx}`}>
                               <td>{a.hora}</td>
                               <td>{a.nome}</td>
@@ -292,7 +377,7 @@ const Dashboard: React.FC = () => {
                     )}
                   </Card.Body>
                   <Card.Footer className="bg-white">
-                    <Button variant="outline-primary" size="sm">Ver histórico</Button>
+                    <Button variant="outline-primary" size="sm" href="/historico">Ver histórico</Button>
                   </Card.Footer>
                 </Card>
               </Col>
@@ -315,17 +400,17 @@ const Dashboard: React.FC = () => {
             </a>
           </li>
           <li className="nav-item">
-            <a className="nav-link" href="#">
+            <a className="nav-link" href="/historico">
               <FolderOpen size={18} className="me-2" /> Histórico
             </a>
           </li>
           <li className="nav-item">
-            <a className="nav-link" href="#">
+            <a className="nav-link" href="/relatorios">
               <BarChart3 size={18} className="me-2" /> Relatórios
             </a>
           </li>
           <li className="nav-item">
-            <a className="nav-link" href="#">
+            <a className="nav-link" href="/medicamentos">
               <Package size={18} className="me-2" /> Medicamentos
             </a>
           </li>
@@ -338,7 +423,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default Dashboard
+export default Dashboard;
