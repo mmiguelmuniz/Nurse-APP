@@ -1,6 +1,7 @@
 import 'bootstrap/dist/css/bootstrap.min.css';
 import '../styles/Dashboard.css';
 import logoImg from '../assets/EAR.png';
+import { useNavigate } from 'react-router-dom';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Container, Row, Col, Card, Button, Table } from 'react-bootstrap';
 import {
@@ -47,6 +48,8 @@ function horaBR(iso: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
+
+const navigate = useNavigate();
 
 const Dashboard: React.FC = () => {
   const userName = 'Usuário'; // TODO: trocar por /users/me quando quiser
@@ -332,8 +335,14 @@ const Dashboard: React.FC = () => {
                     )}
                   </Card.Body>
                   <Card.Footer className="bg-white d-flex gap-2">
-                    <Button variant="outline-secondary" size="sm" href="/medicamentos">Ver estoque</Button>
-                    <Button variant="outline-primary" size="sm" href="/medicamentos">Registrar saída</Button>
+                 <Button
+                  variant="outline-secondary"
+                  size="sm"
+                  onClick={() => navigate('/medicamentos')}
+                >
+                  Ver estoque
+                </Button>
+                   <Button variant="outline-primary" size="sm" href="/medicamentos">Registrar saída</Button>
                   </Card.Footer>
                 </Card>
               </Col>

@@ -11,6 +11,7 @@ export function captureTokensFromUrl() {
   if (access) localStorage.setItem('access', access);
   if (refresh) localStorage.setItem('refresh', refresh);
   if (access || refresh) {
+    // remove os query params sem recarregar a página
     window.history.replaceState({}, document.title, window.location.pathname);
   }
 }

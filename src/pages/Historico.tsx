@@ -1,17 +1,34 @@
 import 'bootstrap/dist/css/bootstrap.min.css';
 import '../styles/Historico.css';
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Container, Row, Col, Card, Button, Form, Table, Badge, Modal
-} from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Form, Table, Badge, Modal } from 'react-bootstrap';
 import { Search, Filter, Download, Info, Printer } from 'lucide-react';
 import logoImg from '../assets/ss.png';
 import api from '../lib/api';
 
+/** ===== DTOs do banco ===== */
+type ClassDTO = { id: string; name: string };
+type ReasonDTO = { id: string; name: string; active?: boolean };
+type CommunicationDTO = { id: string; name: string };
+
+/** ===== Itens usados no atendimento ===== */
+type UsedItemCategory = 'MEDICAMENTO' | 'CURATIVO';
+
+type UsedItem = {
+  id: string; // id do AttendanceMedication (pivô)
+  quantidade: number;
+  item: {
+    id: string;
+    nome: string;
+    categoria: UsedItemCategory;
+    unidade?: string | null;
+  };
+};
+
 type Registro = {
   id: string;
-  dataISO: string;     // createdAt
-  hora: string;        // derivado
+  dataISO: string;
+  hora: string;
   nome: string;
   vinculo: string;
   funcao: string;
@@ -20,26 +37,48 @@ type Registro = {
   destino: string;
   comunicacao?: string;
   observacao?: string;
-};
+  atendente?: string;
 
-const funcoes = ['Todos','Aluno','Funcionário','Teacher','TA','ADM','Nurse','Office','Psi','TI','RH','Special'];
-const turmas  = ['Todas','NURSERY A','NURSERY B','PK 3 A','PK 4 A','KINDER A','1st A','1st B','2nd A','3rd A','4th A','5th A','6th','7th','8th','9th','10th','11th','12th','—'];
-const motivos = ['Todos','Febre','Cefaleia','Corte superficial','Dor de cabeça','Dor de ouvido','Náusea','Alergia','Outros'];
+  // ✅ novo: medicamentos/curativos usados
+  usedItems?: UsedItem[];
+};
 
 // helpers
 function toHoraBR(iso: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
+
 function mapAttendanceToRegistro(a: any): Registro {
-  const turma =
-    a.class?.name ?? a.className ?? a.turma ?? '—';
-  const motivo =
-    a.motivo?.name ?? a.reason?.name ?? a.motivo ?? a.reason ?? '—';
+  const turma = a.class?.name ?? a.className ?? a.turma ?? '—';
+  const motivo = a.motivo?.name ?? a.reason?.name ?? a.motivo ?? a.reason ?? '—';
   const comunicacao =
     a.comunicacao?.name ?? a.communication?.name ?? a.comunicacao ?? a.communication ?? undefined;
 
   const dataISO = a.createdAt ?? a.dataISO ?? new Date().toISOString();
+
+  // ✅ captura medicamentos/curativos do backend
+  // backend: include { medications: { include: { item: true } } }
+  const usedItems: UsedItem[] = Array.isArray(a.medications)
+    ? a.medications
+        .map((m: any) => {
+          const categoria = (m?.item?.categoria ?? m?.item?.category) as UsedItemCategory | undefined;
+          // Se não vier categoria válida, ignora pra não quebrar a UI
+          if (categoria !== 'MEDICAMENTO' && categoria !== 'CURATIVO') return null;
+
+          return {
+            id: m?.id ?? `${m?.attendanceId ?? 'att'}_${m?.itemId ?? 'item'}`,
+            quantidade: Number(m?.quantidade ?? m?.quantity ?? 0),
+            item: {
+              id: m?.item?.id ?? m?.itemId,
+              nome: m?.item?.nome ?? m?.item?.name ?? '—',
+              categoria,
+              unidade: m?.item?.unidade ?? m?.item?.unit ?? null,
+            },
+          } as UsedItem;
+        })
+        .filter(Boolean)
+    : [];
 
   return {
     id: a.id,
@@ -53,57 +92,111 @@ function mapAttendanceToRegistro(a: any): Registro {
     destino: a.destino ?? '—',
     comunicacao,
     observacao: a.descricao ?? a.observacao ?? undefined,
+    atendente: a.user?.name ?? a.user?.email ?? '—',
+
+    usedItems,
   };
 }
 
 export default function Historico() {
-  // Busca & filtros
+  /** ===== Lookups (do banco) ===== */
+  const [classes, setClasses] = useState<ClassDTO[]>([]);
+  const [reasons, setReasons] = useState<ReasonDTO[]>([]);
+  // (não vamos filtrar por comunicação agora, mas deixo carregado se quiser depois)
+  const [communications, setCommunications] = useState<CommunicationDTO[]>([]);
+
+  /** ===== Busca & filtros ===== */
   const [q, setQ] = useState('');
   const [funcao, setFuncao] = useState('Todos');
-  const [turma, setTurma] = useState('Todas');
-  const [motivo, setMotivo] = useState('Todos');
+
+  // agora são IDs (UUID). string vazia = "todas"
+  const [classId, setClassId] = useState<string>('');
+  const [motivoId, setMotivoId] = useState<string>('');
+
   const [soEmergencia, setSoEmergencia] = useState(false);
   const [dtIni, setDtIni] = useState<string>(''); // yyyy-mm-dd
   const [dtFim, setDtFim] = useState<string>(''); // yyyy-mm-dd
 
-  // Paginação
+  /** ===== Paginação ===== */
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState<number | null>(null);
 
-  // Dados
+  /** ===== Dados ===== */
   const [registros, setRegistros] = useState<Registro[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Modal de detalhes
+  /** ===== Modal detalhes ===== */
   const [detalhe, setDetalhe] = useState<Registro | null>(null);
 
-  // Carregar do backend sempre que filtros/página mudarem
+  /** ===== Carrega lookups (classes/reasons/communications) ===== */
   useEffect(() => {
     let canceled = false;
+
+    (async () => {
+      try {
+        const [cls, rea, com] = await Promise.all([
+          api.get<ClassDTO[]>('/classes'),
+          api.get<ReasonDTO[]>('/reasons'),
+          api.get<CommunicationDTO[]>('/communications'),
+        ]);
+
+        if (canceled) return;
+
+        // ordena por nome pra ficar bonito no select
+        const clsSorted = (cls.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+        const reaActive = (rea.data ?? []).filter((r: any) => (r.active === undefined ? true : !!r.active));
+        const reaSorted = reaActive.slice().sort((a, b) => a.name.localeCompare(b.name));
+
+        setClasses(clsSorted);
+        setReasons(reaSorted);
+        setCommunications(com.data ?? []);
+      } catch (e) {
+        console.error('Falha ao carregar lookups:', e);
+        if (!canceled) {
+          setClasses([]);
+          setReasons([]);
+          setCommunications([]);
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  /** ===== Carregar histórico do backend ===== */
+  useEffect(() => {
+    let canceled = false;
+
     (async () => {
       try {
         setLoading(true);
 
-        const params: any = {
-          page,
-          pageSize,
-        };
+        const params: any = { page, pageSize };
+
         if (q.trim()) params.busca = q.trim();
         if (funcao !== 'Todos') params.funcao = funcao;
-        if (turma !== 'Todas') params.turma = turma;
-        if (motivo !== 'Todos') params.motivo = motivo;
+
+        // ✅ agora manda os IDs reais (UUID)
+        if (classId) params.turma = classId;   // backend usa where.classId = turma
+        if (motivoId) params.motivo = motivoId; // backend usa where.motivoId = motivo
+
         if (soEmergencia) params.emergencia = true;
         if (dtIni) params.start = dtIni;
         if (dtFim) params.end = dtFim;
 
         const { data } = await api.get('/attendances', { params });
 
-        // Aceita dois formatos: array puro OU objeto com {items,total,...}
         const items: any[] = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
         const totalServer: number | null = Array.isArray(data) ? null : (data.total ?? null);
 
+        // (opcional) descomente 1x para confirmar que vem medications
+        // console.log('sample attendance', items?.[0]);
+
         const mapped = items.map(mapAttendanceToRegistro);
+
         if (!canceled) {
           setRegistros(mapped);
           setTotal(totalServer);
@@ -119,15 +212,16 @@ export default function Historico() {
       }
     })();
 
-    return () => { canceled = true; };
-  }, [q, funcao, turma, motivo, soEmergencia, dtIni, dtFim, page, pageSize]);
+    return () => {
+      canceled = true;
+    };
+  }, [q, funcao, classId, motivoId, soEmergencia, dtIni, dtFim, page, pageSize]);
 
-  // Resetar página quando filtros mudarem
+  /** ===== Resetar página ao mudar filtros ===== */
   useEffect(() => {
     setPage(1);
-  }, [q, funcao, turma, motivo, soEmergencia, dtIni, dtFim]);
+  }, [q, funcao, classId, motivoId, soEmergencia, dtIni, dtFim]);
 
-  // Lista (já vem filtrada do backend; manteremos ordenação por data desc no front por garantia)
   const lista = useMemo(
     () => [...registros].sort((a, b) => +new Date(b.dataISO) - +new Date(a.dataISO)),
     [registros]
@@ -136,16 +230,17 @@ export default function Historico() {
   const badgeDestino = (d: string) => {
     const up = d?.toUpperCase() || '';
     if (up === 'HOSPITAL') return <Badge bg="danger">Emergência</Badge>;
-    if (up === 'HOME')     return <Badge bg="secondary">Casa</Badge>;
+    if (up === 'HOME') return <Badge bg="secondary">Casa</Badge>;
     if (up.startsWith('OFFICE')) return <Badge bg="info">Office/Special</Badge>;
-    if (up === 'DISMISS')  return <Badge bg="warning" text="dark">Dismiss</Badge>;
+    if (up === 'DISMISS') return <Badge bg="warning" text="dark">Dismiss</Badge>;
     return <Badge bg="light" text="dark">{d || '—'}</Badge>;
   };
 
-  /* ==== Export CSV (dos registros atuais) ==== */
+  /** ===== Export CSV ===== */
   const exportarCSV = () => {
-    const headers = ['Data','Hora','Nome','Vínculo','Função','Turma','Motivo','Destino','Comunicação','Observação'];
+    const headers = ['Atendente','Data','Hora','Nome','Vínculo','Função','Turma','Motivo','Destino','Comunicação','Observação'];
     const rows = lista.map(r => ([
+      r.atendente || '',
       new Date(r.dataISO).toLocaleDateString('pt-BR'),
       r.hora || new Date(r.dataISO).toTimeString().slice(0,5),
       r.nome, r.vinculo, r.funcao, r.turma || '',
@@ -167,7 +262,7 @@ export default function Historico() {
     URL.revokeObjectURL(url);
   };
 
-  /* ==== Imprimir / PDF de um registro ==== */
+  /** ===== Imprimir registro ===== */
   const imprimirRegistro = (reg: Registro) => {
     const w = window.open('', '_blank', 'width=800,height=900');
     if (!w) return;
@@ -204,13 +299,13 @@ export default function Historico() {
 
           <div class="card">
             <div class="row">
+              <div><span class="label">Atendente:</span> <span class="value">${reg.atendente || '-'}</span></div>
               <div><span class="label">Data/Hora:</span> <span class="value">${ds}</span></div>
-              <div><span class="label">Hora (informada):</span> <span class="value">${reg.hora || '-'}</span></div>
               <div><span class="label">Vínculo:</span> <span class="value">${reg.vinculo}</span></div>
               <div><span class="label">Função:</span> <span class="value">${reg.funcao}</span></div>
               <div><span class="label">Turma:</span> <span class="value">${reg.turma || '-'}</span></div>
               <div><span class="label">Motivo:</span> <span class="value">${reg.motivo}</span></div>
-              <div><span class="label">Destino:</span> <span className="value">${reg.destino}</span></div>
+              <div><span class="label">Destino:</span> <span class="value">${reg.destino}</span></div>
               <div><span class="label">Comunicação:</span> <span class="value">${reg.comunicacao || '-'}</span></div>
             </div>
           </div>
@@ -229,9 +324,11 @@ export default function Historico() {
     w.document.close();
   };
 
+  /** ===== Selects (dinâmicos) ===== */
+  const funcoes = ['Todos','Aluno','Funcionário','Teacher','TA','ADM','Maint','Nurse','Office','Psi','TI','RH','Storage','Special','Portaria/Segurança'];
+
   return (
     <div className="historico-page">
-      {/* NAVBAR mínima com logo + voltar */}
       <div className="historico-topbar d-flex align-items-center justify-content-between">
         <div className="d-flex align-items-center gap-2">
           <img src={logoImg} alt="Logo EAR" className="historico-logo" />
@@ -243,7 +340,6 @@ export default function Historico() {
       </div>
 
       <Container fluid className="py-3">
-        {/* Cabeçalho com export */}
         <Row className="align-items-center g-2 mb-2">
           <Col xs={12} md>
             <div className="text-muted small">Registros de atendimentos</div>
@@ -257,7 +353,6 @@ export default function Historico() {
           </Col>
         </Row>
 
-        {/* Filtros */}
         <Card className="border-0 shadow-xs mb-3">
           <Card.Body>
             <Row className="g-2 align-items-end">
@@ -265,7 +360,7 @@ export default function Historico() {
                 <Form.Label>Busca</Form.Label>
                 <div className="d-flex">
                   <Form.Control
-                    placeholder="Nome, motivo, turma…"
+                    placeholder="Nome, descrição, responsável…"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     disabled={loading}
@@ -273,24 +368,34 @@ export default function Historico() {
                   <span className="btn-search"><Search size={18} /></span>
                 </div>
               </Col>
+
               <Col sm={6} lg={2}>
                 <Form.Label>Função</Form.Label>
-                <Form.Select value={funcao} onChange={(e)=>setFuncao(e.target.value)} disabled={loading}>
-                  {funcoes.map(f => <option key={f}>{f}</option>)}
+                <Form.Select value={funcao} onChange={(e) => setFuncao(e.target.value)} disabled={loading}>
+                  {funcoes.map(f => <option key={f} value={f}>{f}</option>)}
                 </Form.Select>
               </Col>
-              <Col sm={6} lg={2}>
+
+              <Col sm={6} lg={3}>
                 <Form.Label>Turma</Form.Label>
-                <Form.Select value={turma} onChange={(e)=>setTurma(e.target.value)} disabled={loading}>
-                  {turmas.map(t => <option key={t}>{t}</option>)}
+                <Form.Select value={classId} onChange={(e) => setClassId(e.target.value)} disabled={loading}>
+                  <option value="">Todas</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
                 </Form.Select>
               </Col>
-              <Col sm={6} lg={2}>
+
+              <Col sm={6} lg={3}>
                 <Form.Label>Motivo</Form.Label>
-                <Form.Select value={motivo} onChange={(e)=>setMotivo(e.target.value)} disabled={loading}>
-                  {motivos.map(m => <option key={m}>{m}</option>)}
+                <Form.Select value={motivoId} onChange={(e) => setMotivoId(e.target.value)} disabled={loading}>
+                  <option value="">Todos</option>
+                  {reasons.map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
                 </Form.Select>
               </Col>
+
               <Col sm={6} lg={2}>
                 <Form.Check
                   className="mt-4"
@@ -298,7 +403,7 @@ export default function Historico() {
                   id="switch-emergencia"
                   label="Só emergências"
                   checked={soEmergencia}
-                  onChange={(e)=>setSoEmergencia(e.target.checked)}
+                  onChange={(e) => setSoEmergencia(e.target.checked)}
                   disabled={loading}
                 />
               </Col>
@@ -307,16 +412,28 @@ export default function Historico() {
             <Row className="g-2 mt-1">
               <Col sm={6} md={3}>
                 <Form.Label>De</Form.Label>
-                <Form.Control type="date" value={dtIni} onChange={(e)=>setDtIni(e.target.value)} disabled={loading} />
+                <Form.Control type="date" value={dtIni} onChange={(e) => setDtIni(e.target.value)} disabled={loading} />
               </Col>
               <Col sm={6} md={3}>
                 <Form.Label>Até</Form.Label>
-                <Form.Control type="date" value={dtFim} onChange={(e)=>setDtFim(e.target.value)} disabled={loading} />
+                <Form.Control type="date" value={dtFim} onChange={(e) => setDtFim(e.target.value)} disabled={loading} />
               </Col>
               <Col md="auto" className="align-self-end">
-                <Button size="sm" variant="outline-secondary" onClick={()=>{
-                  setQ(''); setFuncao('Todos'); setTurma('Todas'); setMotivo('Todos'); setSoEmergencia(false); setDtIni(''); setDtFim(''); setPage(1);
-                }} disabled={loading}>
+                <Button
+                  size="sm"
+                  variant="outline-secondary"
+                  onClick={() => {
+                    setQ('');
+                    setFuncao('Todos');
+                    setClassId('');
+                    setMotivoId('');
+                    setSoEmergencia(false);
+                    setDtIni('');
+                    setDtFim('');
+                    setPage(1);
+                  }}
+                  disabled={loading}
+                >
                   <Filter size={16} className="me-1" /> Limpar filtros
                 </Button>
               </Col>
@@ -324,38 +441,35 @@ export default function Historico() {
           </Card.Body>
         </Card>
 
-        {/* Tabela */}
         <div className="table-wrapper">
           <Table responsive hover className="align-middle">
             <thead>
               <tr>
-                <th style={{width: 90}}>Data</th>
-                <th style={{width: 70}}>Hora</th>
+                <th style={{ width: 180 }}>Atendente</th>
+                <th style={{ width: 90 }}>Data</th>
+                <th style={{ width: 70 }}>Hora</th>
                 <th>Nome</th>
-                <th style={{width: 120}}>Função</th>
-                <th style={{width: 110}}>Turma</th>
+                <th style={{ width: 120 }}>Função</th>
+                <th style={{ width: 120 }}>Turma</th>
                 <th>Motivo</th>
-                <th style={{width: 140}}>Destino</th>
-                <th style={{width: 170}}>Ações</th>
+                <th style={{ width: 140 }}>Destino</th>
+                <th style={{ width: 170 }}>Ações</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="text-center text-muted py-4">Carregando…</td></tr>
+                <tr><td colSpan={9} className="text-center text-muted py-4">Carregando…</td></tr>
               ) : lista.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center text-muted py-4">
-                    Nenhum registro encontrado.
-                  </td>
-                </tr>
+                <tr><td colSpan={9} className="text-center text-muted py-4">Nenhum registro encontrado.</td></tr>
               ) : (
                 lista.map((r) => {
                   const d = new Date(r.dataISO);
                   const ds = d.toLocaleDateString('pt-BR');
                   return (
                     <tr key={r.id}>
+                      <td>{r.atendente || '—'}</td>
                       <td>{ds}</td>
-                      <td>{r.hora || new Date(r.dataISO).toTimeString().slice(0,5)}</td>
+                      <td>{r.hora || new Date(r.dataISO).toTimeString().slice(0, 5)}</td>
                       <td className="fw-semibold">{r.nome}</td>
                       <td>{r.funcao}</td>
                       <td>{r.turma || '—'}</td>
@@ -363,10 +477,10 @@ export default function Historico() {
                       <td>{badgeDestino(r.destino)}</td>
                       <td>
                         <div className="d-flex gap-2 flex-wrap">
-                          <Button size="sm" variant="outline-primary" onClick={()=>setDetalhe(r)}>
+                          <Button size="sm" variant="outline-primary" onClick={() => setDetalhe(r)}>
                             <Info size={16} className="me-1" /> Detalhes
                           </Button>
-                          <Button size="sm" variant="outline-secondary" onClick={()=>imprimirRegistro(r)}>
+                          <Button size="sm" variant="outline-secondary" onClick={() => imprimirRegistro(r)}>
                             <Printer size={16} className="me-1" /> Imprimir
                           </Button>
                         </div>
@@ -379,7 +493,6 @@ export default function Historico() {
           </Table>
         </div>
 
-        {/* Paginação */}
         <div className="d-flex justify-content-between align-items-center mt-3">
           <div className="text-muted small">
             {loading
@@ -392,7 +505,7 @@ export default function Historico() {
             <Button
               size="sm"
               variant="outline-secondary"
-              onClick={() => setPage(p => Math.max(1, p - 1))}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={loading || page === 1}
             >
               Anterior
@@ -400,8 +513,8 @@ export default function Historico() {
             <Button
               size="sm"
               variant="outline-secondary"
-              onClick={() => setPage(p => p + 1)}
-              disabled={loading || (total != null && lista.length < pageSize)}
+              onClick={() => setPage((p) => p + 1)}
+              disabled={loading || (total != null && page * pageSize >= total)}
             >
               Próximo
             </Button>
@@ -409,14 +522,14 @@ export default function Historico() {
         </div>
       </Container>
 
-      {/* Modal Detalhes */}
-      <Modal show={!!detalhe} onHide={()=>setDetalhe(null)} centered>
+      <Modal show={!!detalhe} onHide={() => setDetalhe(null)} centered>
         <Modal.Header closeButton>
           <Modal.Title>Detalhes do atendimento</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {detalhe && (
             <div className="small">
+              <div><strong>Atendente:</strong> {detalhe.atendente || '—'}</div>
               <div><strong>Nome:</strong> {detalhe.nome}</div>
               <div><strong>Vínculo:</strong> {detalhe.vinculo}</div>
               <div><strong>Função:</strong> {detalhe.funcao}</div>
@@ -425,12 +538,57 @@ export default function Historico() {
               <div><strong>Destino:</strong> {detalhe.destino}</div>
               <div><strong>Comunicação:</strong> {detalhe.comunicacao || '—'}</div>
               <div><strong>Data/Hora:</strong> {new Date(detalhe.dataISO).toLocaleString('pt-BR')}</div>
-              {detalhe.observacao && <div className="mt-2"><strong>Obs.:</strong> {detalhe.observacao}</div>}
+
+              {detalhe.observacao && (
+                <div className="mt-2"><strong>Obs.:</strong> {detalhe.observacao}</div>
+              )}
+
+              {/* ✅ NOVO: medicamentos e curativos */}
+              {(() => {
+                const items = detalhe.usedItems ?? [];
+                const meds = items.filter((i) => i.item.categoria === 'MEDICAMENTO');
+                const curativos = items.filter((i) => i.item.categoria === 'CURATIVO');
+
+                const line = (x: UsedItem) => {
+                  const unit = x.item.unidade ? ` ${x.item.unidade}` : '';
+                  return `${x.item.nome} — ${x.quantidade}${unit}`;
+                };
+
+                return (
+                  <div className="mt-3">
+                    <div className="mb-2">
+                      <strong>Medicamentos administrados:</strong>
+                      {meds.length === 0 ? (
+                        <div className="text-muted">Nenhum.</div>
+                      ) : (
+                        <ul className="mb-2">
+                          {meds.map((m) => (
+                            <li key={m.id}>{line(m)}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div>
+                      <strong>Curativos utilizados:</strong>
+                      {curativos.length === 0 ? (
+                        <div className="text-muted">Nenhum.</div>
+                      ) : (
+                        <ul className="mb-0">
+                          {curativos.map((c) => (
+                            <li key={c.id}>{line(c)}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={()=>setDetalhe(null)}>Fechar</Button>
+          <Button variant="secondary" onClick={() => setDetalhe(null)}>Fechar</Button>
         </Modal.Footer>
       </Modal>
     </div>

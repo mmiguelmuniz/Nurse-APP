@@ -1,15 +1,24 @@
-import 'bootstrap/dist/css/bootstrap.min.css'
-import '../styles/Login.css'
-import React from 'react'
-import { Card, Button } from 'react-bootstrap'
-import logoImg from '../assets/STANDARD_EAR_color_PNG.png'      // logo da escola
-import bannerImg from '../assets/Banner.png' // banner de fundo
+import 'bootstrap/dist/css/bootstrap.min.css';
+import '../styles/Login.css';
+import React, { useEffect } from 'react';
+import { Card, Button } from 'react-bootstrap';
+import logoImg from '../assets/STANDARD_EAR_color_PNG.png';
+import bannerImg from '../assets/Banner.png';
+import { captureTokensFromUrl, isAuthenticated, loginWithGoogle } from '../lib/auth';
 
 export default function Login() {
+  // Ao entrar na página, captura ?access/&?refresh e salva
+  useEffect(() => {
+    captureTokensFromUrl();
+    // Se já estiver autenticado, manda para o dashboard
+    if (isAuthenticated()) {
+      window.location.href = '/';
+    }
+  }, []);
+
   const handleGoogleSignIn = () => {
-    // TODO: conectar Google Identity (OAuth)
-    console.log('Sign in with Google')
-  }
+    loginWithGoogle();
+  };
 
   return (
     <div className="login-page">
@@ -51,5 +60,5 @@ export default function Login() {
         </Card>
       </div>
     </div>
-  )
+  );
 }
