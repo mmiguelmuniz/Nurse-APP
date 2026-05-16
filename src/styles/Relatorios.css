@@ -1,25 +1,50 @@
-.relatorios-page {
-  background: #f7fbfd;
-  min-height: 100vh;
+.rel-coming-soon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
 }
 
-/* Topbar */
-.rel-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 8px 12px;
+.rel-card {
+  background: var(--surface-0);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  padding: 3rem 2.5rem;
+  text-align: center;
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
-.rel-logo { height: 28px; width: auto; }
-.rel-title { font-weight: 800; color: #0f172a; }
 
-/* KPI cards */
-.kpi-card { border-radius: 12px; }
-.kpi-label {
-  font-size: .9rem; color: #64748b; font-weight: 700; margin-bottom: .2rem;
+.rel-emoji {
+  font-size: 3.5rem;
+  line-height: 1;
 }
-.kpi-value {
-  font-size: 1.6rem; font-weight: 800; color: #0f172a; line-height: 1.1;
+
+.rel-card h2 {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--gray-900);
+  margin: 0;
+}
+
+.rel-card p {
+  font-size: 0.9rem;
+  color: var(--gray-500);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.rel-badge {
+  background: var(--brand-light);
+  color: var(--brand-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.35rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--brand-muted);
 }

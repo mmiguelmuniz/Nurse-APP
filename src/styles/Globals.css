@@ -1,0 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Brand */
+  --brand-primary:    #0e7490;
+  --brand-dark:       #0a5c73;
+  --brand-light:      #e0f2fe;
+  --brand-muted:      #bae6fd;
+
+  /* Neutrals */
+  --gray-50:  #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+
+  /* Semantics */
+  --success: #059669;
+  --success-bg: #d1fae5;
+  --warning: #d97706;
+  --warning-bg: #fef3c7;
+  --danger:  #dc2626;
+  --danger-bg: #fee2e2;
+  --info: #0284c7;
+  --info-bg: #e0f2fe;
+
+  /* Surfaces */
+  --surface-0: #ffffff;
+  --surface-1: #f8fafc;
+  --surface-2: #f1f5f9;
+
+  /* Sidebar */
+  --sidebar-w: 240px;
+  --sidebar-bg: #0a1628;
+  --sidebar-text: rgba(255,255,255,0.75);
+  --sidebar-active: rgba(14, 116, 144, 0.35);
+  --sidebar-hover: rgba(255,255,255,0.07);
+
+  /* Typography */
+  --font-sans: 'DM Sans', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:  0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-lg:  0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+
+  /* Transitions */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur: 180ms;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--surface-1);
+  color: var(--gray-800);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+
+/* ─── Utility ─── */
+.text-brand  { color: var(--brand-primary); }
+.text-muted  { color: var(--gray-500) !important; }
+.fw-600 { font-weight: 600; }
+.fw-700 { font-weight: 700; }
+
+/* ─── Badge chips ─── */
+.chip-success { background: var(--success-bg); color: #065f46; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.chip-warning { background: var(--warning-bg); color: #92400e; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.chip-danger  { background: var(--danger-bg);  color: #991b1b; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.chip-info    { background: var(--info-bg);    color: #075985; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.chip-gray    { background: var(--gray-100);   color: var(--gray-600); font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+
+/* ─── Skeleton ─── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-200) 50%, var(--gray-100) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── NurseApp btn override ─── */
+.btn-brand {
+  background: var(--brand-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1.25rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.btn-brand:hover  { background: var(--brand-dark); box-shadow: 0 4px 14px rgba(14,116,144,0.35); transform: translateY(-1px); }
+.btn-brand:active { transform: translateY(0); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--gray-600);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 0.45rem 1rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.btn-ghost:hover { background: var(--gray-100); border-color: var(--gray-300); }

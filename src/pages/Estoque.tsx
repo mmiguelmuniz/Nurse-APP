@@ -1,429 +1,640 @@
-import 'bootstrap/dist/css/bootstrap.min.css';
-import '../styles/Dashboard.css';
-import logoImg from '../assets/EAR.png';
-import React, { useEffect, useMemo, useState } from 'react';
-import { Container, Row, Col, Card, Button, Table } from 'react-bootstrap';
+import React, { useEffect, useState, useCallback } from 'react'
 import {
-  LogOut,
-  FileText,
-  FolderOpen,
-  BarChart3,
-  Package,
-  Activity,
-  AlertTriangle,
-  AlertCircle,
-} from 'lucide-react';
-import api from '../lib/api';
+  Package, TrendingDown, TrendingUp, AlertTriangle,
+  Search, Plus, Minus, History, X, PlusCircle, Pencil, Trash2
+} from 'lucide-react'
+import Layout from '../components/layout'
+import api from '../lib/api'
+import '../styles/Estoque.css'
 
-type Periodo = 'hoje' | 'semana' | 'mes';
-
-type Stats = {
-  atendimentosHoje: number;     // valor do período selecionado quando 'hoje'
-  atendimentosSemana: number;   // sempre o KPI da semana
-  estoqueMedicamentos: number;  // soma do estoqueAtual (categoria MEDICAMENTO)
-  emergenciasHoje: number;      // emergências do período selecionado
-  // deltas por enquanto ficam em 0 (podemos calcular depois com séries)
-  deltaAtendimentos?: number;
-  deltaEmergencias?: number;
-};
-
-type ItemCritico = { id: string; nome: string; estoqueAtual: number };
-type AtendimentoDia = { hora: string; nome: string; motivo: string; emergencia?: boolean };
-
-// helpers
-function isoDate(d: Date) {
-  // YYYY-MM-DD
-  return d.toISOString().slice(0, 10);
-}
-function hojeRange() {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 1); // amanhã (exclusive)
-  return { start: isoDate(start), end: isoDate(end) };
-}
-function horaBR(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+type Item = {
+  id: string
+  nome: string
+  categoria: 'MEDICAMENTO' | 'CURATIVO'
+  unidade: string
+  estoqueAtual: number
+  minimo: number
+  descontaEstoque: boolean
+  active: boolean
 }
 
-const Dashboard: React.FC = () => {
-  const userName = 'Usuário'; // TODO: trocar por /users/me quando quiser
+type Movement = {
+  id: string
+  tipo: 'ENTRADA' | 'SAIDA'
+  quantidade: number
+  motivo?: string
+  createdAt: string
+  item?: { nome: string; unidade: string }
+  attendance?: { nome: string }
+  contabilizaEstoque: boolean
+}
 
-  const [periodo, setPeriodo] = useState<Periodo>('hoje');
+type Tab = 'itens' | 'movimentacoes'
+type CategoriaFiltro = 'TODOS' | 'MEDICAMENTO' | 'CURATIVO'
 
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<Stats>({
-    atendimentosHoje: 0,
-    atendimentosSemana: 0,
-    estoqueMedicamentos: 0,
-    emergenciasHoje: 0,
-    deltaAtendimentos: 0,
-    deltaEmergencias: 0,
-  });
+function dataBR(iso: string) {
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
 
-  const [itensCriticos, setItensCriticos] = useState<ItemCritico[]>([]);
-  const [atendimentosHoje, setAtendimentosHoje] = useState<AtendimentoDia[]>([]);
+function stockStatus(item: Item): 'ok' | 'low' | 'critical' | 'zero' {
+  if (!item.descontaEstoque) return 'ok'
+  if (item.estoqueAtual <= 0) return 'zero'
+  if (item.minimo > 0 && item.estoqueAtual < item.minimo) return 'critical'
+  if (item.minimo > 0 && item.estoqueAtual < item.minimo * 1.5) return 'low'
+  return 'ok'
+}
 
-  const labelAtendimentos = useMemo(
-    () => (periodo === 'hoje' ? 'Atendimentos (hoje)' : 'Atendimentos'),
-    [periodo]
-  );
-  const labelEmergencias = useMemo(
-    () => (periodo === 'hoje' ? 'Emergências (hoje)' : 'Emergências'),
-    [periodo]
-  );
+const statusLabel: Record<string, string> = {
+  ok: 'OK', low: 'Baixo', critical: 'Crítico', zero: 'Zerado',
+}
+const statusChip: Record<string, string> = {
+  ok: 'chip-success', low: 'chip-warning', critical: 'chip-danger', zero: 'chip-danger',
+}
 
-  useEffect(() => {
-    let canceled = false;
-    (async () => {
-      try {
-        setLoading(true);
+// ─── Modal de entrada/saída manual ───
+function MovimentoModal({ item, tipo, onClose, onSuccess }: {
+  item: Item; tipo: 'ENTRADA' | 'SAIDA'; onClose: () => void; onSuccess: () => void
+}) {
+  const [qty, setQty] = useState(1)
+  const [motivo, setMotivo] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-        // 1) KPIs do período selecionado
-        const kpiPeriodoPromise = api.get('/metrics/kpis', { params: { period: periodo } });
-
-        // 2) KPI fixo para "Atendimentos (semana)"
-        const kpiSemanaPromise = api.get('/metrics/kpis', { params: { period: 'semana' } });
-
-        // 3) Itens críticos (lista)
-        const criticosPromise = api.get<ItemCritico[]>('/items/criticos');
-
-        // 4) Soma de estoque de medicamentos
-        const medsPromise = api.get<any[]>('/items', {
-          params: { categoria: 'MEDICAMENTO', ativos: true },
-        });
-
-        // 5) Últimos atendimentos de hoje
-        const { start, end } = hojeRange();
-        const atendsPromise = api.get<any[]>('/attendances', {
-          params: { start, end, pageSize: 10 },
-        });
-
-        const [kpiPeriodoRes, kpiSemanaRes, criticosRes, medsRes, atendsRes] = await Promise.all([
-          kpiPeriodoPromise,
-          kpiSemanaPromise,
-          criticosPromise,
-          medsPromise,
-          atendsPromise,
-        ]);
-
-        if (canceled) return;
-
-        const kpiPeriodo = kpiPeriodoRes.data as {
-          atendimentos: number;
-          emergencias: number;
-          itensCriticos: number;
-        };
-        const kpiSemana = (kpiSemanaRes.data as any).atendimentos as number;
-
-        const itensCriticosData: ItemCritico[] = (criticosRes.data || []).map((i: any) => ({
-          id: i.id,
-          nome: i.nome,
-          estoqueAtual: i.estoqueAtual,
-        }));
-
-        const estoqueMedicamentosSoma: number = (medsRes.data || []).reduce(
-          (sum: number, it: any) => sum + (Number(it.estoqueAtual) || 0),
-          0
-        );
-
-        const atendimentosHojeData: AtendimentoDia[] = (atendsRes.data || []).map((a: any) => ({
-          hora: horaBR(a.createdAt),
-          nome: a.nome,
-          motivo: a.motivo?.name || '—',
-          emergencia: typeof a.destino === 'string' && a.destino.toLowerCase().includes('emerg'),
-        }));
-
-        setStats({
-          atendimentosHoje: kpiPeriodo.atendimentos,
-          atendimentosSemana: kpiSemana,
-          estoqueMedicamentos: estoqueMedicamentosSoma,
-          emergenciasHoje: kpiPeriodo.emergencias,
-          deltaAtendimentos: 0, // TODO: calcular com séries, se quiser
-          deltaEmergencias: 0,  // TODO: calcular com séries, se quiser
-        });
-        setItensCriticos(itensCriticosData);
-        setAtendimentosHoje(atendimentosHojeData);
-      } catch (e) {
-        console.error('Falha ao carregar dashboard:', e);
-      } finally {
-        if (!canceled) setLoading(false);
-      }
-    })();
-    return () => {
-      canceled = true;
-    };
-  }, [periodo]);
-
-  const StatCard = ({
-    icon,
-    label,
-    value,
-    delta,
-    showDelta = false,
-  }: {
-    icon: React.ReactNode;
-    label: string;
-    value: number;
-    delta?: number;
-    showDelta?: boolean;
-  }) => (
-    <Card className={`stat-card h-100 shadow-sm border-0 ${loading ? 'skeleton' : ''}`}>
-      <Card.Body className="d-flex align-items-center gap-3">
-        <div className="stat-icon">{icon}</div>
-        <div className="d-flex flex-column">
-          <span className="stat-label">{label}</span>
-          {loading ? (
-            <span className="stat-value skeleton-line"></span>
-          ) : (
-            <span className="stat-value">{Number(value || 0).toLocaleString('pt-BR')}</span>
-          )}
-          {showDelta && (
-            loading ? (
-              <span className="stat-meta skeleton-line small"></span>
-            ) : (
-              <span className="stat-meta">
-                <span className={`delta-badge ${Number(delta) >= 0 ? 'up' : 'down'}`}>
-                  {Number(delta) >= 0 ? '↑' : '↓'} {Math.abs(Number(delta) || 0)}%
-                </span>
-              </span>
-            )
-          )}
-        </div>
-      </Card.Body>
-    </Card>
-  );
+  const handleSubmit = async () => {
+    if (qty < 1) return setError('Quantidade deve ser maior que 0.')
+    if (tipo === 'SAIDA' && item.descontaEstoque && qty > item.estoqueAtual) {
+      return setError(`Estoque insuficiente. Disponível: ${item.estoqueAtual} ${item.unidade}`)
+    }
+    try {
+      setLoading(true)
+      await api.post(`/items/${item.id}/${tipo === 'ENTRADA' ? 'entrada' : 'saida'}`, {
+        quantidade: qty,
+        motivo: motivo || (tipo === 'ENTRADA' ? 'Entrada manual' : 'Saída manual'),
+      })
+      onSuccess()
+      onClose()
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? 'Erro ao registrar movimento.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
-    <div className="d-flex flex-column min-vh-100">
-      <div className="main-content">
-        <div className="flex-grow-1 d-flex flex-column dashboard-content">
-          {/* Topbar */}
-          <div className="topbar w-100 d-flex justify-content-between align-items-center px-3 px-md-4 py-2">
-            <h5 className="m-0">Olá, {userName}</h5>
-            <Button variant="outline-danger" size="sm">
-              <LogOut size={16} className="me-1" /> Sair
-            </Button>
+    <div className="est-modal-overlay" onClick={onClose}>
+      <div className="est-modal" onClick={e => e.stopPropagation()}>
+        <div className="est-modal-header">
+          <div>
+            <h3 className="est-modal-title">
+              {tipo === 'ENTRADA' ? '↑ Registrar Entrada' : '↓ Registrar Saída'}
+            </h3>
+            <p className="est-modal-sub">{item.nome}</p>
           </div>
-
-          {/* Filtros de período */}
-          <div className="filter-chips px-3 px-md-4 mt-3">
-            <button className={`chip ${periodo === 'hoje' ? 'active' : ''}`} onClick={() => setPeriodo('hoje')}>
-              Hoje
-            </button>
-            <button className={`chip ${periodo === 'semana' ? 'active' : ''}`} onClick={() => setPeriodo('semana')}>
-              Semana
-            </button>
-            <button className={`chip ${periodo === 'mes' ? 'active' : ''}`} onClick={() => setPeriodo('mes')}>
-              Mês
-            </button>
-          </div>
-
-          {/* KPIs */}
-          <Container className="mt-3">
-            <Row className="g-3">
-              <Col xs={12} md={6} lg={3}>
-                <StatCard
-                  icon={<Activity size={22} aria-label="Atendimentos" />}
-                  label={labelAtendimentos}
-                  value={periodo === 'hoje' ? stats.atendimentosHoje : stats.atendimentosHoje} // mostra o do período
-                  delta={stats.deltaAtendimentos}
-                  showDelta={false} // ativaremos quando calcularmos séries
-                />
-              </Col>
-              <Col xs={12} md={6} lg={3}>
-                <StatCard
-                  icon={<FolderOpen size={22} aria-label="Atendimentos (semana)" />}
-                  label="Atendimentos (semana)"
-                  value={stats.atendimentosSemana}
-                />
-              </Col>
-              <Col xs={12} md={6} lg={3}>
-                <StatCard
-                  icon={<Package size={22} aria-label="Medicamentos em estoque" />}
-                  label="Medicamentos em estoque"
-                  value={stats.estoqueMedicamentos}
-                />
-              </Col>
-              <Col xs={12} md={6} lg={3}>
-                <StatCard
-                  icon={<AlertTriangle size={22} aria-label="Emergências" />}
-                  label={labelEmergencias}
-                  value={stats.emergenciasHoje}
-                  delta={stats.deltaEmergencias}
-                  showDelta={false} // idem
-                />
-              </Col>
-            </Row>
-          </Container>
-
-          {/* Atalhos principais */}
-          <Container className="my-4">
-            <h3 className="mb-4 text-center text-md-start">Painel da Enfermaria</h3>
-            <Row className="g-4">
-              <Col xs={12} md={6} lg={4}>
-                <Card className="shadow-sm border-0 hover-card h-100">
-                  <Card.Body>
-                    <Card.Title className="d-flex align-items-center gap-2">
-                      📝 <span>Novo Atendimento</span>
-                    </Card.Title>
-                    <Card.Text>Registre um atendimento de forma rápida</Card.Text>
-                    <Button variant="primary" href="/novo-atendimento">Abrir</Button>
-                  </Card.Body>
-                </Card>
-              </Col>
-
-              <Col xs={12} md={6} lg={4}>
-                <Card className="shadow-sm border-0 hover-card h-100">
-                  <Card.Body>
-                    <Card.Title className="d-flex align-items-center gap-2">
-                      📂 <span>Histórico</span>
-                    </Card.Title>
-                    <Card.Text>Visualize atendimentos anteriores</Card.Text>
-                    <Button variant="primary" href="/historico">Visualizar</Button>
-                  </Card.Body>
-                </Card>
-              </Col>
-
-              <Col xs={12} md={6} lg={4}>
-                <Card className="shadow-sm border-0 hover-card h-100">
-                  <Card.Body>
-                    <Card.Title className="d-flex align-items-center gap-2">
-                      📊 <span>Relatórios</span>
-                    </Card.Title>
-                    <Card.Text>Gere gráficos e relatórios personalizados</Card.Text>
-                    <Button variant="primary" href="/relatorios">Acessar</Button>
-                  </Card.Body>
-                </Card>
-              </Col>
-            </Row>
-          </Container>
-
-          {/* Widgets */}
-          <Container className="mb-4">
-            <Row className="g-4">
-              {/* Estoque: itens críticos */}
-              <Col xs={12} lg={6}>
-                <Card className="shadow-sm border-0 h-100">
-                  <Card.Header className="bg-white d-flex align-items-center justify-content-between">
-                    <strong>Estoque: itens críticos</strong>
-                    <AlertCircle size={18} className="text-warning" />
-                  </Card.Header>
-                  <Card.Body>
-                    {loading ? (
-                      <ul className="list-unstyled m-0">
-                        {[...Array(4)].map((_, i) => (
-                          <li key={i} className="widget-skeleton-line mb-2" />
-                        ))}
-                      </ul>
-                    ) : itensCriticos.length === 0 ? (
-                      <div className="text-success">Sem itens críticos 🎉</div>
-                    ) : (
-                      <ul className="list-unstyled m-0">
-                        {itensCriticos.map((item) => (
-                          <li key={item.id} className="d-flex justify-content-between py-2 border-bottom">
-                            <span>{item.nome}</span>
-                            <span className="badge bg-danger-subtle text-danger fw-bold">↓ {item.estoqueAtual}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </Card.Body>
-                  <Card.Footer className="bg-white d-flex gap-2">
-                    <Button variant="outline-secondary" size="sm" href="/medicamentos">Ver estoque</Button>
-                    <Button variant="outline-primary" size="sm" href="/medicamentos">Registrar saída</Button>
-                  </Card.Footer>
-                </Card>
-              </Col>
-
-              {/* Últimos atendimentos (Hoje) */}
-              <Col xs={12} lg={6}>
-                <Card className="shadow-sm border-0 h-100">
-                  <Card.Header className="bg-white d-flex align-items-center justify-content-between">
-                    <strong>Últimos atendimentos (Hoje)</strong>
-                  </Card.Header>
-                  <Card.Body className="p-0">
-                    {loading ? (
-                      <div className="p-3">
-                        {[...Array(4)].map((_, i) => (
-                          <div key={i} className="widget-skeleton-line mb-2" />
-                        ))}
-                      </div>
-                    ) : atendimentosHoje.length === 0 ? (
-                      <div className="p-3 text-muted">Sem registros hoje.</div>
-                    ) : (
-                      <Table responsive hover className="m-0">
-                        <thead>
-                          <tr>
-                            <th style={{ width: 80 }}>Hora</th>
-                            <th>Nome</th>
-                            <th>Motivo</th>
-                            <th style={{ width: 110 }}>Emergência</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {atendimentosHoje.map((a, idx) => (
-                            <tr key={`${a.hora}-${idx}`}>
-                              <td>{a.hora}</td>
-                              <td>{a.nome}</td>
-                              <td>{a.motivo}</td>
-                              <td>{a.emergencia ? '✓' : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </Table>
-                    )}
-                  </Card.Body>
-                  <Card.Footer className="bg-white">
-                    <Button variant="outline-primary" size="sm" href="/historico">Ver histórico</Button>
-                  </Card.Footer>
-                </Card>
-              </Col>
-            </Row>
-          </Container>
-        </div>
-      </div>
-
-      {/* Sidebar fixa à ESQUERDA (controlada via CSS) */}
-      <div className="sidebar d-flex flex-column">
-        <div className="mb-4 text-center">
-          <img src={logoImg} alt="Logo" style={{ width: 80 }} />
-          <h5 className="mt-2">Nursing App</h5>
+          <button className="est-modal-close" onClick={onClose}><X size={18} /></button>
         </div>
 
-        <ul className="nav flex-column gap-2">
-          <li className="nav-item">
-            <a className="nav-link" href="/novo-atendimento">
-              <FileText size={18} className="me-2" /> Novo Atendimento
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="/historico">
-              <FolderOpen size={18} className="me-2" /> Histórico
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="/relatorios">
-              <BarChart3 size={18} className="me-2" /> Relatórios
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="//medicamentos">
-              <Package size={18} className="me-2" /> Medicamentos
-            </a>
-          </li>
-        </ul>
+        <div className="est-modal-body">
+          {tipo === 'SAIDA' && item.descontaEstoque && (
+            <div className="est-modal-info">
+              Estoque atual: <strong>{item.estoqueAtual} {item.unidade}</strong>
+            </div>
+          )}
+          {error && <div className="est-modal-error">{error}</div>}
 
-        <div className="sidebar-footer mt-auto">
-          <Button variant="outline-light" size="sm" className="w-100">
-            <LogOut size={16} className="me-1" /> Sair
-          </Button>
+          <div className="est-modal-field">
+            <label>Quantidade *</label>
+            <input
+              type="number"
+              min={1}
+              max={tipo === 'SAIDA' && item.descontaEstoque ? item.estoqueAtual : undefined}
+              value={qty}
+              onChange={e => { setQty(Number(e.target.value)); setError(null) }}
+              className="est-input"
+            />
+          </div>
+          <div className="est-modal-field">
+            <label>Motivo</label>
+            <input
+              type="text"
+              value={motivo}
+              onChange={e => setMotivo(e.target.value)}
+              placeholder={tipo === 'ENTRADA' ? 'Ex.: Reposição mensal' : 'Ex.: Uso em atendimento'}
+              className="est-input"
+            />
+          </div>
+        </div>
+
+        <div className="est-modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+          <button
+            className={`btn-brand ${tipo === 'SAIDA' ? 'btn-brand--danger' : ''}`}
+            onClick={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? 'Salvando...' : tipo === 'ENTRADA' ? 'Registrar entrada' : 'Registrar saída'}
+          </button>
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default Dashboard;
+
+
+// ─── Modal editar item ───
+function EditItemModal({ item, onClose, onSuccess }: { item: Item; onClose: () => void; onSuccess: () => void }) {
+  const [nome, setNome] = useState(item.nome)
+  const [minimo, setMinimo] = useState(item.minimo)
+  const [descontaEstoque, setDescontaEstoque] = useState(item.descontaEstoque)
+  const [active, setActive] = useState(item.active)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSave = async () => {
+    if (!nome.trim()) return setError('Nome é obrigatório.')
+    try {
+      setLoading(true)
+      await api.patch(`/items/${item.id}`, { nome: nome.trim(), minimo: Number(minimo), descontaEstoque, active })
+      onSuccess()
+      onClose()
+    } catch {
+      setError('Erro ao salvar.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="est-modal-overlay" onClick={onClose}>
+      <div className="est-modal" onClick={e => e.stopPropagation()}>
+        <div className="est-modal-header">
+          <div>
+            <h3 className="est-modal-title">Editar item</h3>
+            <p className="est-modal-sub">{item.nome}</p>
+          </div>
+          <button className="est-modal-close" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="est-modal-body">
+          {error && <div className="est-modal-error">{error}</div>}
+          <div className="est-modal-field">
+            <label>Nome *</label>
+            <input className="est-input" value={nome} onChange={e => { setNome(e.target.value); setError(null) }} />
+          </div>
+          <div className="est-modal-field">
+            <label>Estoque mínimo</label>
+            <input type="number" min={0} className="est-input" value={minimo} onChange={e => setMinimo(Number(e.target.value))} />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600, color: 'var(--gray-700)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={descontaEstoque} onChange={e => setDescontaEstoque(e.target.checked)} />
+            Controlar estoque
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600, color: 'var(--gray-700)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
+            Item ativo
+          </label>
+        </div>
+        <div className="est-modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn-brand" onClick={handleSave} disabled={loading}>
+            {loading ? 'Salvando...' : 'Salvar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const UNIDADES = ['Comprimido', 'Cápsula', 'ml', 'mg', 'un', 'ampola', 'frasco', 'sachê', 'gota', 'supositório']
+
+// ─── Modal novo item ───
+function NovoItemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [nome, setNome] = useState('')
+  const [categoria, setCategoria] = useState<'MEDICAMENTO' | 'CURATIVO'>('MEDICAMENTO')
+  const [unidade, setUnidade] = useState('')
+  const [minimo, setMinimo] = useState(0)
+  const [estoqueInicial, setEstoqueInicial] = useState(0)
+  const [descontaEstoque, setDescontaEstoque] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    if (!nome.trim()) return setError('Nome é obrigatório.')
+    if (!unidade.trim()) return setError('Unidade é obrigatória.')
+    try {
+      setLoading(true)
+      await api.post('/items', {
+        nome: nome.trim(),
+        categoria,
+        unidade: unidade.trim(),
+        minimo: Number(minimo),
+        estoqueAtual: Number(estoqueInicial),
+        descontaEstoque,
+        active: true,
+      })
+      onSuccess()
+      onClose()
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? 'Erro ao criar item.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="est-modal-overlay" onClick={onClose}>
+      <div className="est-modal" onClick={e => e.stopPropagation()}>
+        <div className="est-modal-header">
+          <div>
+            <h3 className="est-modal-title">Novo item de estoque</h3>
+            <p className="est-modal-sub">Medicamento ou curativo</p>
+          </div>
+          <button className="est-modal-close" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="est-modal-body">
+          {error && <div className="est-modal-error">{error}</div>}
+          <div className="est-modal-field">
+            <label>Nome *</label>
+            <input className="est-input" value={nome} onChange={e => { setNome(e.target.value); setError(null) }} placeholder="Ex.: Paracetamol 500mg" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div className="est-modal-field">
+              <label>Categoria *</label>
+              <select className="est-input" value={categoria} onChange={e => setCategoria(e.target.value as any)}>
+                <option value="MEDICAMENTO">Medicamento</option>
+                <option value="CURATIVO">Curativo</option>
+              </select>
+            </div>
+            <div className="est-modal-field">
+              <label>Unidade *</label>
+              <select className="est-input" value={unidade} onChange={e => { setUnidade(e.target.value); setError(null) }}>
+                <option value="">Selecione...</option>
+                {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div className="est-modal-field">
+              <label>Estoque inicial</label>
+              <input type="number" min={0} className="est-input" value={estoqueInicial} onChange={e => setEstoqueInicial(Number(e.target.value))} />
+            </div>
+            <div className="est-modal-field">
+              <label>Estoque mínimo</label>
+              <input type="number" min={0} className="est-input" value={minimo} onChange={e => setMinimo(Number(e.target.value))} />
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600, color: 'var(--gray-700)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={descontaEstoque} onChange={e => setDescontaEstoque(e.target.checked)} />
+            Controlar estoque (descontar nas saídas)
+          </label>
+        </div>
+        <div className="est-modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn-brand" onClick={handleSubmit} disabled={loading}>
+            {loading ? 'Salvando...' : 'Criar item'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function Estoque() {
+  const [tab, setTab] = useState<Tab>('itens')
+  const [items, setItems] = useState<Item[]>([])
+  const [movements, setMovements] = useState<Movement[]>([])
+  const [loading, setLoading] = useState(true)
+  const [movLoading, setMovLoading] = useState(false)
+  const [busca, setBusca] = useState('')
+  const [categoria, setCategoria] = useState<CategoriaFiltro>('TODOS')
+  const [modal, setModal] = useState<{ item: Item; tipo: 'ENTRADA' | 'SAIDA' } | null>(null)
+  const [novoItem, setNovoItem] = useState(false)
+  const [editItem, setEditItem] = useState<Item | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<Item | null>(null)
+  const [expandedItem, setExpandedItem] = useState<string | null>(null)
+  const [movPage, setMovPage] = useState(1)
+  const [movTotal, setMovTotal] = useState(0)
+  const MOV_PAGE_SIZE = 20
+
+  const loadItems = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await api.get<Item[]>('/items', { params: { ativos: true } })
+      setItems(res.data ?? [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadMovements = useCallback(async (page = 1) => {
+    try {
+      setMovLoading(true)
+      const res = await api.get<any>('/movements', { params: { page, pageSize: MOV_PAGE_SIZE } })
+      const data = res.data
+      if (Array.isArray(data)) {
+        setMovements(data)
+        setMovTotal(data.length)
+      } else {
+        setMovements(data.items ?? [])
+        setMovTotal(data.total ?? 0)
+      }
+      setMovPage(page)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setMovLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadItems() }, [loadItems])
+  useEffect(() => { if (tab === 'movimentacoes') loadMovements(1) }, [tab, loadMovements])
+
+  const filteredItems = items.filter(it => {
+    const matchBusca = it.nome.toLowerCase().includes(busca.toLowerCase())
+    const matchCat = categoria === 'TODOS' || it.categoria === categoria
+    return matchBusca && matchCat
+  })
+
+  const criticos = items.filter(it => ['critical','zero'].includes(stockStatus(it)))
+  const totalMeds = items.filter(it => it.categoria === 'MEDICAMENTO').reduce((s, it) => s + it.estoqueAtual, 0)
+  const totalCur  = items.filter(it => it.categoria === 'CURATIVO').reduce((s, it) => s + it.estoqueAtual, 0)
+
+  return (
+    <Layout title="Estoque" subtitle="Medicamentos e curativos">
+      {/* Summary cards */}
+      <div className="est-summary">
+        <div className="est-sum-card">
+          <Package size={18} className="est-sum-icon est-sum-icon--blue" />
+          <div>
+            <div className="est-sum-label">Medicamentos</div>
+            <div className="est-sum-value">{totalMeds.toLocaleString('pt-BR')}</div>
+          </div>
+        </div>
+        <div className="est-sum-card">
+          <Package size={18} className="est-sum-icon est-sum-icon--green" />
+          <div>
+            <div className="est-sum-label">Curativos</div>
+            <div className="est-sum-value">{totalCur.toLocaleString('pt-BR')}</div>
+          </div>
+        </div>
+        <div className="est-sum-card">
+          <AlertTriangle size={18} className="est-sum-icon est-sum-icon--red" />
+          <div>
+            <div className="est-sum-label">Itens críticos</div>
+            <div className="est-sum-value">{criticos.length}</div>
+          </div>
+        </div>
+        <div className="est-sum-card">
+          <Package size={18} className="est-sum-icon est-sum-icon--teal" />
+          <div>
+            <div className="est-sum-label">Total de itens</div>
+            <div className="est-sum-value">{items.length}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* New item button */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+        <button className="btn-brand" onClick={() => setNovoItem(true)}>
+          <PlusCircle size={15} /> Novo item
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div className="est-tabs">
+        <button className={`est-tab ${tab === 'itens' ? 'est-tab--active' : ''}`} onClick={() => setTab('itens')}>
+          <Package size={15} /> Itens em estoque
+        </button>
+        <button className={`est-tab ${tab === 'movimentacoes' ? 'est-tab--active' : ''}`} onClick={() => setTab('movimentacoes')}>
+          <History size={15} /> Movimentações
+        </button>
+      </div>
+
+      {/* Tab: Itens */}
+      {tab === 'itens' && (
+        <div className="est-card">
+          {/* Filters */}
+          <div className="est-filters">
+            <div className="est-search">
+              <Search size={15} className="est-search-icon" />
+              <input
+                type="text"
+                placeholder="Buscar item..."
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                className="est-search-input"
+              />
+            </div>
+            <div className="est-cat-chips">
+              {(['TODOS','MEDICAMENTO','CURATIVO'] as CategoriaFiltro[]).map(c => (
+                <button
+                  key={c}
+                  className={`db-chip ${categoria === c ? 'db-chip--active' : ''}`}
+                  onClick={() => setCategoria(c)}
+                >
+                  {c === 'TODOS' ? 'Todos' : c === 'MEDICAMENTO' ? 'Medicamentos' : 'Curativos'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Table */}
+          {loading ? (
+            <div className="est-loading">
+              {[1,2,3,4,5].map(i => <div key={i} className="skeleton" style={{ height: 48, marginBottom: 8, borderRadius: 8 }} />)}
+            </div>
+          ) : (
+            <div className="est-table-wrap">
+              <table className="est-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Categoria</th>
+                    <th>Estoque atual</th>
+                    <th>Mínimo</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredItems.length === 0 ? (
+                    <tr><td colSpan={6} className="est-empty">Nenhum item encontrado.</td></tr>
+                  ) : filteredItems.map(item => {
+                    const status = stockStatus(item)
+                    return (
+                      <tr key={item.id} className={status === 'critical' || status === 'zero' ? 'est-row--critical' : ''}>
+                        <td className="est-item-nome">{item.nome}</td>
+                        <td>
+                          <span className={item.categoria === 'MEDICAMENTO' ? 'chip-info' : 'chip-gray'}>
+                            {item.categoria === 'MEDICAMENTO' ? 'Medicamento' : 'Curativo'}
+                          </span>
+                        </td>
+                        <td className="est-qty">
+                          <span className="est-qty-val">{item.estoqueAtual}</span>
+                          <span className="est-qty-unit">{item.unidade}</span>
+                        </td>
+                        <td className="est-min">
+                          {item.descontaEstoque ? `${item.minimo} ${item.unidade}` : '—'}
+                        </td>
+                        <td>
+                          {item.descontaEstoque
+                            ? <span className={statusChip[status]}>{statusLabel[status]}</span>
+                            : <span className="chip-gray">Sem controle</span>
+                          }
+                        </td>
+                        <td>
+                          <div className="est-actions">
+                            <button className="est-btn-action est-btn-action--in" onClick={() => setModal({ item, tipo: 'ENTRADA' })} title="Registrar entrada">
+                              <Plus size={13} /> Entrada
+                            </button>
+                            <button className="est-btn-action est-btn-action--out" onClick={() => setModal({ item, tipo: 'SAIDA' })} disabled={item.descontaEstoque && item.estoqueAtual <= 0} title="Registrar saída">
+                              <Minus size={13} /> Saída
+                            </button>
+                            <button className="est-btn-action est-btn-action--edit" onClick={() => setEditItem(item)} title="Editar item">
+                              <Pencil size={13} />
+                            </button>
+                            <button className="est-btn-action est-btn-action--del" onClick={() => setConfirmDelete(item)} title="Remover item">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Movimentações */}
+      {tab === 'movimentacoes' && (
+        <div className="est-card">
+          {movLoading ? (
+            <div className="est-loading">
+              {[1,2,3,4,5].map(i => <div key={i} className="skeleton" style={{ height: 52, marginBottom: 8, borderRadius: 8 }} />)}
+            </div>
+          ) : (
+            <>
+              <div className="est-table-wrap">
+                <table className="est-table">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Item</th>
+                      <th>Tipo</th>
+                      <th>Quantidade</th>
+                      <th>Motivo</th>
+                      <th>Atendimento</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movements.length === 0 ? (
+                      <tr><td colSpan={6} className="est-empty">Nenhuma movimentação encontrada.</td></tr>
+                    ) : movements.map(m => (
+                      <tr key={m.id}>
+                        <td className="est-mov-data">{dataBR(m.createdAt)}</td>
+                        <td className="est-item-nome">{m.item?.nome ?? '—'}</td>
+                        <td>
+                          <span className={m.tipo === 'ENTRADA' ? 'chip-success' : 'chip-danger'}>
+                            {m.tipo === 'ENTRADA'
+                              ? <><TrendingUp size={11} style={{ marginRight: 3 }} />Entrada</>
+                              : <><TrendingDown size={11} style={{ marginRight: 3 }} />Saída</>
+                            }
+                          </span>
+                        </td>
+                        <td className="est-qty">
+                          <span className="est-qty-val">{m.quantidade}</span>
+                          <span className="est-qty-unit">{m.item?.unidade ?? ''}</span>
+                        </td>
+                        <td>{m.motivo ?? '—'}</td>
+                        <td>{m.attendance?.nome ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {movTotal > MOV_PAGE_SIZE && (
+                <div className="est-pagination">
+                  <button
+                    className="btn-ghost"
+                    disabled={movPage <= 1}
+                    onClick={() => loadMovements(movPage - 1)}
+                  >
+                    ← Anterior
+                  </button>
+                  <span className="est-pagination-info">
+                    Página {movPage} de {Math.ceil(movTotal / MOV_PAGE_SIZE)}
+                  </span>
+                  <button
+                    className="btn-ghost"
+                    disabled={movPage >= Math.ceil(movTotal / MOV_PAGE_SIZE)}
+                    onClick={() => loadMovements(movPage + 1)}
+                  >
+                    Próxima →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Edit item modal */}
+      {editItem && (
+        <EditItemModal item={editItem} onClose={() => setEditItem(null)} onSuccess={loadItems} />
+      )}
+
+      {/* Confirm delete modal */}
+      {confirmDelete && (
+        <div className="est-modal-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="est-modal" style={{ maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <div className="est-modal-header">
+              <h3 className="est-modal-title">Remover item</h3>
+              <button className="est-modal-close" onClick={() => setConfirmDelete(null)}><X size={18} /></button>
+            </div>
+            <div className="est-modal-body">
+              <p style={{ fontSize: '0.9rem', color: 'var(--gray-700)', margin: 0 }}>
+                Tem certeza que deseja remover <strong>{confirmDelete.nome}</strong>? Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <div className="est-modal-footer">
+              <button className="btn-ghost" onClick={() => setConfirmDelete(null)}>Cancelar</button>
+              <button className="btn-brand btn-brand--danger" onClick={async () => {
+                try {
+                  await api.delete(`/items/${confirmDelete.id}`)
+                  setConfirmDelete(null)
+                  loadItems()
+                } catch {
+                  alert('Erro ao remover item.')
+                }
+              }}>Remover</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Novo item modal */}
+      {novoItem && (
+        <NovoItemModal onClose={() => setNovoItem(false)} onSuccess={loadItems} />
+      )}
+
+      {/* Modal */}
+      {modal && (
+        <MovimentoModal
+          item={modal.item}
+          tipo={modal.tipo}
+          onClose={() => setModal(null)}
+          onSuccess={loadItems}
+        />
+      )}
+    </Layout>
+  )
+}

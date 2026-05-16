@@ -1,100 +1,135 @@
-import 'bootstrap/dist/css/bootstrap.min.css'
-import '../styles/NovoAtendimento.css'
 import React, { useMemo, useState, useEffect } from 'react'
-import { Container, Row, Col, Card, Button, Form, Alert, Badge } from 'react-bootstrap'
-import color from '../assets/color.png'
+import { ClipboardCheck, AlertCircle, X, AlertTriangle } from 'lucide-react'
+import Layout from '../components/layout'
 import api from '../lib/api'
+import '../styles/NovoAtendimento.css'
 
-/** ===== DTOs vindos do BACK ===== */
-type ClassDTO = { id: string; name: string }
-type ReasonDTO = { id: string; name: string; active?: boolean }
+type ClassDTO         = { id: string; name: string }
+type ReasonDTO        = { id: string; name: string; active?: boolean }
 type CommunicationDTO = { id: string; name: string }
-
 type ItemDTO = {
-  id: string
-  nome: string
-  categoria: 'MEDICAMENTO' | 'CURATIVO'
-  unidade: string
-  minimo: number
-  estoqueAtual: number
-  active: boolean
-  createdAt: string
-  descontaEstoque?: boolean // ✅ NOVO
+  id: string; nome: string; categoria: 'MEDICAMENTO' | 'CURATIVO'
+  unidade: string; minimo: number; estoqueAtual: number
+  active: boolean; descontaEstoque?: boolean
 }
-
-/** ===== Form ===== */
 type FormValues = {
-  nome: string
-  vinculo: string
-  horaChegada: string
-  funcao: string
-  classId: string
-  motivoId: string
-  descricao: string
-  responsavel: string
-  comunicacaoId: string
-  hgt?: string
-  temperatura?: string
-  fc?: string
-  pa?: string
-  spo2?: string
-  outros: string
-  destino: string
+  nome: string; vinculo: string; horaChegada: string; funcao: string
+  classId: string; motivoId: string; descricao: string; responsavel: string
+  comunicacaoId: string; hgt: string; temperatura: string; fc: string
+  pa: string; spo2: string; destino: string
 }
 
-const funcoes = [
-  'Aluno','Funcionário','Parents/Relatives','ADM','Maint','Nurse','Office','Psi','Teacher','TA',
-  'Terceirizado','TI','RH','Storage','Special','Portaria/Segurança'
+const VINCULOS = [
+  'Aluno(a)','Funcionário','Visitante','Parents/Relatives',
 ]
 
-// ✅ destino com “Selecione...”
-const destinos = ['DISMISS','HOME','HOSPITAL','OFFICE/ Special']
+const FUNCOES = [
+  'Funcionário','Parents/Relatives','ADM','Maint','Nurse',
+  'Office','Psi','Teacher','TA','Terceirizado','TI','RH','Storage',
+  'Special','Portaria/Segurança',
+]
 
-const defaultValues: FormValues = {
-  nome: '',
-  vinculo: '',
-  horaChegada: '',
-  funcao: '',
-  classId: '',
-  motivoId: '',
-  descricao: '',
-  responsavel: '',
-  comunicacaoId: '',
-  hgt: '',
-  temperatura: '',
-  fc: '',
-  pa: '',
-  spo2: '',
-  outros: '',
-  destino: ''
+const VINCULOS_SEM_FUNCAO = ['Aluno(a)', 'Visitante', 'Parents/Relatives']
+const DESTINOS = ['DISMISS','HOME','HOSPITAL','OFFICE/ Special']
+const DESTINO_LABELS: Record<string, string> = {
+  DISMISS: 'Liberado', HOME: 'Para casa', HOSPITAL: 'Hospital', 'OFFICE/ Special': 'Secretaria',
+}
+
+function nowTime(): string {
+  const now = new Date()
+  return now.toTimeString().slice(0, 5)
+}
+
+function isIncomplete(values: FormValues): boolean {
+  return !values.nome.trim() || !values.funcao || !values.motivoId || !values.destino
+}
+
+
+// ─── TimeInput component ───
+function TimeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  // Generate times every 5 minutes from 07:30 to 21:00
+  const times: string[] = []
+  for (let h = 7; h <= 21; h++) {
+    const startMin = h === 7 ? 30 : 0
+    const endMin   = h === 21 ? 0  : 55
+    for (let m = startMin; m <= endMin; m += 5) {
+      times.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`)
+    }
+  }
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Scroll to current time when opens
+  React.useEffect(() => {
+    if (open && ref.current) {
+      const active = ref.current.querySelector('.na-time-option--active')
+      active?.scrollIntoView({ block: 'center' })
+    }
+  }, [open])
+
+  const display = (t: string) => {
+    if (!t) return '--:--'
+    return t
+  }
+
+  return (
+    <div className="na-time-wrapper" ref={ref}>
+      <button type="button" className="na-time-trigger" onClick={() => setOpen(v => !v)}>
+        <span>&#128336; {display(value)}</span>
+        <span className="na-time-caret">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="na-time-dropdown">
+          {times.map(t => (
+            <button
+              key={t}
+              type="button"
+              className={`na-time-option ${value === t ? 'na-time-option--active' : ''}`}
+              onClick={() => { onChange(t); setOpen(false) }}
+            >
+              {display(t)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function NovoAtendimento() {
-  const [values, setValues] = useState<FormValues>(defaultValues)
-  const [submitting, setSubmitting] = useState(false)
+  const [values, setValues] = useState<FormValues>(() => ({
+    nome: '', vinculo: '', horaChegada: nowTime(), funcao: '', classId: '',
+    motivoId: '', descricao: '', responsavel: '', comunicacaoId: '',
+    hgt: '', temperatura: '', fc: '', pa: '', spo2: '', destino: '',
+  }))
+  const [submitting, setSubmitting]     = useState(false)
   const [loadingLookups, setLoadingLookups] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  const [error, setError]               = useState<string | null>(null)
+  const [success, setSuccess]           = useState(false)
+  const [savedIncomplete, setSavedIncomplete] = useState(false)
 
-  /** ===== Lookups do banco ===== */
-  const [classes, setClasses] = useState<ClassDTO[]>([])
-  const [reasons, setReasons] = useState<ReasonDTO[]>([])
+  const [classes, setClasses]             = useState<ClassDTO[]>([])
+  const [reasons, setReasons]             = useState<ReasonDTO[]>([])
   const [communications, setCommunications] = useState<CommunicationDTO[]>([])
-  const [medItems, setMedItems] = useState<ItemDTO[]>([])
-  const [curItems, setCurItems] = useState<ItemDTO[]>([])
-
-  /** itemId -> quantidade */
+  const [medItems, setMedItems]           = useState<ItemDTO[]>([])
+  const [curItems, setCurItems]           = useState<ItemDTO[]>([])
   const [selectedItems, setSelectedItems] = useState<Record<string, number>>({})
 
-  /** ===== Carregamento inicial ===== */
   useEffect(() => {
     let canceled = false
-
     ;(async () => {
       try {
         setLoadingLookups(true)
-        setError(null)
-
         const [cls, rea, com, med, cur] = await Promise.all([
           api.get<ClassDTO[]>('/classes'),
           api.get<ReasonDTO[]>('/reasons'),
@@ -102,423 +137,321 @@ export default function NovoAtendimento() {
           api.get<ItemDTO[]>('/items', { params: { categoria: 'MEDICAMENTO', ativos: 'true' } }),
           api.get<ItemDTO[]>('/items', { params: { categoria: 'CURATIVO', ativos: 'true' } }),
         ])
-
         if (canceled) return
-
-        const sortedClasses = (cls.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name))
-        const rsRaw = (rea.data ?? []).filter((r: any) => (r.active === undefined ? true : !!r.active))
-        const sortedReasons = rsRaw.slice().sort((a, b) => a.name.localeCompare(b.name))
-        const sortedComms = (com.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name))
-
-        const sortedMed = (med.data ?? []).slice().sort((a, b) => a.nome.localeCompare(b.nome))
-        const sortedCur = (cur.data ?? []).slice().sort((a, b) => a.nome.localeCompare(b.nome))
-
-        setClasses(sortedClasses)
-        setReasons(sortedReasons)
-        setCommunications(sortedComms)
-        setMedItems(sortedMed)
-        setCurItems(sortedCur)
-      } catch (e) {
-        console.error(e)
-        if (!canceled) setError('Não foi possível carregar dados do formulário (turmas/motivos/comunicação/itens).')
+        setClasses((cls.data ?? []).sort((a, b) => a.name.localeCompare(b.name)))
+        setReasons((rea.data ?? []).filter((r: any) => r.active !== false).sort((a, b) => a.name.localeCompare(b.name)))
+        setCommunications((com.data ?? []).sort((a, b) => a.name.localeCompare(b.name)))
+        setMedItems((med.data ?? []).sort((a, b) => a.nome.localeCompare(b.nome)))
+        setCurItems((cur.data ?? []).sort((a, b) => a.nome.localeCompare(b.nome)))
+      } catch {
+        setError('Não foi possível carregar dados do formulário.')
       } finally {
         if (!canceled) setLoadingLookups(false)
       }
     })()
-
     return () => { canceled = true }
   }, [])
 
-  /** ===== validações ===== */
-  const obrigatorios = useMemo(() => ['nome','vinculo','funcao','horaChegada','motivoId','destino'], [])
-  const isRequiredMissing = (v: FormValues) =>
-    obrigatorios.some((k) => !(v as any)[k] || String((v as any)[k]).trim() === '')
+  const incomplete = useMemo(() => isIncomplete(values), [values])
 
-  const handleChange =
-    (field: keyof FormValues) =>
+  const set = (field: keyof FormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-      const val = e.target.value
-      setValues((prev) => ({ ...prev, [field]: val }))
-      setSuccess(false)
+      const value = e.target.value
+      if (field === 'vinculo') {
+        const isAluno = VINCULOS_SEM_FUNCAO.some(v => value.toLowerCase().includes(v.toLowerCase()))
+        setValues(p => ({ ...p, [field]: value, funcao: isAluno ? 'Aluno' : p.funcao }))
+      } else {
+        setValues(p => ({ ...p, [field]: value }))
+      }
       setError(null)
     }
 
-  /** ===== itens ===== */
-  const toggleItem = (itemId: string, checked: boolean) => {
-    setSelectedItems((prev) => {
-      const next = { ...prev }
-      if (!checked) delete next[itemId]
-      else next[itemId] = next[itemId] ?? 1
-      return next
-    })
-    setSuccess(false)
-    setError(null)
-  }
+  const isAluno = VINCULOS_SEM_FUNCAO.some(v => values.vinculo.toLowerCase().includes(v.toLowerCase()))
 
-  const setQty = (itemId: string, qty: number) => {
-    const safe = Number.isFinite(qty) ? Math.max(1, Math.floor(qty)) : 1
-    setSelectedItems((prev) => ({ ...prev, [itemId]: safe }))
-    setSuccess(false)
-    setError(null)
-  }
+  const toggleItem = (id: string, checked: boolean) =>
+    setSelectedItems(p => { const n = { ...p }; if (!checked) delete n[id]; else n[id] = n[id] ?? 1; return n })
 
-  const renderItems = (items: ItemDTO[]) => {
-    return (
-      <div className="grid-cols">
-        {items.map((it) => {
-          const checked = selectedItems[it.id] != null
-          const desconta = it.descontaEstoque !== false // default true
+  const setQty = (id: string, qty: number) =>
+    setSelectedItems(p => ({ ...p, [id]: Math.max(1, Math.floor(qty)) }))
 
-          const max = Math.max(0, it.estoqueAtual)
-
-          // ✅ Regra: se NÃO desconta estoque, não bloqueia por estoque 0
-          const disabledCheckbox = desconta ? (it.estoqueAtual <= 0 && !checked) : false
-
-          const label = desconta
-            ? `${it.nome} (${it.estoqueAtual} ${it.unidade})`
-            : `${it.nome} (sem baixa de estoque)`
-
-          return (
-            <div key={it.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <Form.Check
-                type="checkbox"
-                id={`it_${it.id}`}
-                label={label}
-                checked={checked}
-                onChange={(e) => toggleItem(it.id, e.target.checked)}
-                disabled={disabledCheckbox}
-              />
-
-              {checked && (
-                <Form.Control
-                  style={{ width: 90 }}
-                  type="number"
-                  min={1}
-                  // ✅ só limita max quando o item desconta estoque
-                  max={desconta ? (max || 1) : undefined}
-                  value={selectedItems[it.id]}
-                  onChange={(e) => setQty(it.id, Number(e.target.value))}
-                />
-              )}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  /** ===== submit ===== */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSuccess(false)
-
-    if (loadingLookups) {
-      setError('Aguarde carregar os dados do formulário.')
-      return
-    }
-
-    if (isRequiredMissing(values)) {
-      setError('Preencha todos os campos obrigatórios.')
-      return
-    }
-
-    const toNum = (s?: string) => (s && s.trim() !== '' ? Number(s.replace(',', '.')) : undefined)
-
-    const temp = toNum(values.temperatura)
-    if (temp !== undefined && (temp < 35 || temp > 42)) return setError('Temperatura fora de faixa (35–42 °C).')
-
-    const fc = toNum(values.fc)
-    if (fc !== undefined && (fc < 40 || fc > 200)) return setError('Frequência cardíaca fora de faixa (40–200 bpm).')
-
-    const spo2 = toNum(values.spo2)
-    if (spo2 !== undefined && (spo2 < 70 || spo2 > 100)) return setError('SpO₂ fora de faixa (70–100%).')
-
-    const hgt = toNum(values.hgt)
-    if (hgt !== undefined && (hgt < 40 || hgt > 500)) return setError('HGT fora de faixa (40–500 mg/dl).')
-
-    // ✅ valida estoque SOMENTE para itens que descontam estoque
     const allItems = [...medItems, ...curItems]
     for (const [itemId, qty] of Object.entries(selectedItems)) {
-      const item = allItems.find((x) => x.id === itemId)
-      if (!item) continue
-
-      const desconta = item.descontaEstoque !== false
-      if (desconta && qty > item.estoqueAtual) {
-        setError(`Quantidade maior que o estoque: ${item.nome} (estoque: ${item.estoqueAtual})`)
-        return
-      }
+      const item = allItems.find(x => x.id === itemId)
+      if (item?.descontaEstoque !== false && item && qty > item.estoqueAtual)
+        return setError(`Estoque insuficiente: ${item.nome} (disponível: ${item.estoqueAtual} ${item.unidade})`)
     }
+    const toNum = (s?: string) => s?.trim() ? Number(s.replace(',', '.')) : undefined
+    const temp = toNum(values.temperatura)
+    const fc   = toNum(values.fc)
+    const spo2 = toNum(values.spo2)
+    const hgt  = toNum(values.hgt)
+    if (temp !== undefined && (temp < 35 || temp > 42)) return setError('Temperatura fora de faixa (35–42 °C).')
+    if (fc   !== undefined && (fc < 40 || fc > 200))    return setError('FC fora de faixa (40–200 bpm).')
+    if (spo2 !== undefined && (spo2 < 70 || spo2 > 100)) return setError('SpO₂ fora de faixa (70–100%).')
+    if (hgt  !== undefined && (hgt < 40 || hgt > 500))   return setError('HGT fora de faixa (40–500 mg/dl).')
 
     try {
       setSubmitting(true)
-
-      const payload = {
-        nome: values.nome,
-        vinculo: values.vinculo,
-        funcao: values.funcao,
+      await api.post('/attendances', {
+        nome: values.nome || null,
+        vinculo: values.vinculo || null,
+        funcao: values.funcao || null,
         descricao: values.descricao || null,
         responsavel: values.responsavel || null,
-        destino: values.destino,
+        destino: values.destino || null,
         horaChegada: values.horaChegada
           ? new Date(`1970-01-01T${values.horaChegada}:00`).toISOString()
           : null,
-        hgt: values.hgt ? Number(values.hgt.replace(',', '.')) : null,
-        temperatura: values.temperatura ? Number(values.temperatura.replace(',', '.')) : null,
-        fc: values.fc ? Number(values.fc.replace(',', '.')) : null,
-        pa: values.pa || null,
-        spo2: values.spo2 ? Number(values.spo2.replace(',', '.')) : null,
-
+        hgt: hgt ?? null, temperatura: temp ?? null,
+        fc: fc ?? null, pa: values.pa || null, spo2: spo2 ?? null,
         classId: values.classId || null,
         motivoId: values.motivoId || null,
         comunicacaoId: values.comunicacaoId || null,
-
-        medications: Object.entries(selectedItems).map(([itemId, quantidade]) => ({
-          itemId,
-          quantidade,
-        })),
-      }
-
-      await api.post('/attendances', payload)
+        medications: Object.entries(selectedItems).map(([itemId, quantidade]) => ({ itemId, quantidade })),
+      })
+      setSavedIncomplete(incomplete)
       setSuccess(true)
-    } catch (err) {
-      console.error(err)
+    } catch {
       setError('Não foi possível salvar. Tente novamente.')
     } finally {
       setSubmitting(false)
     }
   }
 
+  const reset = () => {
+    setValues({ nome: '', vinculo: '', horaChegada: nowTime(), funcao: '', classId: '',
+      motivoId: '', descricao: '', responsavel: '', comunicacaoId: '',
+      hgt: '', temperatura: '', fc: '', pa: '', spo2: '', destino: '' })
+    setSelectedItems({})
+    setSuccess(false)
+    setSavedIncomplete(false)
+    setError(null)
+  }
+
+  const renderItems = (items: ItemDTO[]) => (
+    <div className="na-items-grid">
+      {items.map(it => {
+        const checked  = selectedItems[it.id] != null
+        const desconta = it.descontaEstoque !== false
+        const disabled = desconta && it.estoqueAtual <= 0 && !checked
+        return (
+          <label key={it.id}
+            className={`na-item-check ${checked ? 'na-item-check--active' : ''} ${disabled ? 'na-item-check--disabled' : ''}`}>
+            <input type="checkbox" checked={checked} disabled={disabled}
+              onChange={e => toggleItem(it.id, e.target.checked)} style={{ display: 'none' }} />
+            <div className="na-item-check-box">{checked && '✓'}</div>
+            <div className="na-item-info">
+              <span className="na-item-nome">{it.nome}</span>
+              <span className="na-item-stock">
+                {desconta ? `${it.estoqueAtual} ${it.unidade} disponíveis` : 'Sem controle de estoque'}
+              </span>
+            </div>
+            {checked && (
+              <input type="number" min={1}
+                max={desconta ? it.estoqueAtual || 1 : undefined}
+                value={selectedItems[it.id]}
+                onClick={e => e.stopPropagation()}
+                onChange={e => setQty(it.id, Number(e.target.value))}
+                className="na-item-qty" />
+            )}
+          </label>
+        )
+      })}
+    </div>
+  )
+
   return (
-    <div className="form-page">
-      <div className="novoat-topbar d-flex align-items-center p-2">
-        <img src={color} alt="Logo EAR" className="novoat-logo me-2" />
-        <Button variant="outline-secondary" size="sm" href="/dashboard">
-          ← Voltar
-        </Button>
-      </div>
+    <Layout title="Novo Atendimento" subtitle="Registrar visita à enfermaria">
+      <div className="na-root">
+        {/* Alerta campos incompletos */}
+        {incomplete && (
+          <div className="na-alert na-alert--warn">
+            <AlertTriangle size={15} />
+            <span>Campos importantes em branco (nome, função, motivo ou destino). O atendimento será salvo como <strong>incompleto</strong>.</span>
+          </div>
+        )}
 
-      <Container className="py-4">
-        <h2 className="mb-3">Novo Atendimento</h2>
-        <p className="text-muted mb-4">
-          Preencha os campos abaixo. Os campos com <span className="req">*</span> são obrigatórios.
-        </p>
+        {error && (
+          <div className="na-alert na-alert--error">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+            <button onClick={() => setError(null)}><X size={14} /></button>
+          </div>
+        )}
 
-        {error && <Alert variant="danger" className="mb-3">{error}</Alert>}
-
+        {/* Success */}
         {success && (
-          <div className="overlay-confirm">
-            <div className="confirm-card">
-              <button
-                type="button"
-                className="confirm-close"
-                onClick={() => setSuccess(false)}
-                aria-label="Fechar"
-              />
-              <div className="confirm-header">
-                <div className="success-icon" aria-hidden="true">✓</div>
-                <h5>Atendimento salvo com sucesso!</h5>
-                <p className="confirm-subtitle">Escolha uma opção para continuar</p>
+          <div className="na-success-overlay">
+            <div className="na-success-card">
+              <div className={`na-success-icon ${savedIncomplete ? 'na-success-icon--warn' : ''}`}>
+                {savedIncomplete ? '⚠' : '✓'}
               </div>
-
-              <div className="confirm-actions">
-                <button
-                  className="btn-cta"
-                  onClick={() => {
-                    setValues(defaultValues)
-                    setSelectedItems({})
-                    setSuccess(false)
-                  }}
-                >
-                  Realizar novo atendimento
-                </button>
-                <a className="btn-secondary" href="/dashboard">
-                  Voltar ao início
-                </a>
+              <h3>{savedIncomplete ? 'Atendimento salvo (incompleto)' : 'Atendimento salvo!'}</h3>
+              <p>{savedIncomplete
+                ? 'Atendimento registrado com campos em branco. Você pode editá-lo no Histórico.'
+                : 'Registrado com sucesso.'}</p>
+              <div className="na-success-actions">
+                <button className="btn-brand" onClick={reset}>Novo atendimento</button>
+                <a className="btn-ghost" href="/">Voltar ao início</a>
               </div>
             </div>
           </div>
         )}
 
-        <Form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="na-form">
           {/* Identificação */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white"><strong>Identificação</strong></Card.Header>
-            <Card.Body>
-              <Row className="g-3">
-                <Col md={6}>
-                  <Form.Label>Nome <span className="req">*</span></Form.Label>
-                  <Form.Control value={values.nome} onChange={handleChange('nome')} placeholder="Nome completo" />
-                </Col>
-
-                <Col md={3}>
-                  <Form.Label>Vínculo <span className="req">*</span></Form.Label>
-                  <Form.Control value={values.vinculo} onChange={handleChange('vinculo')} placeholder="Ex.: aluno" />
-                </Col>
-
-                <Col md={3}>
-                  <Form.Label>Hora da chegada <span className="req">*</span></Form.Label>
-                  <Form.Control type="time" value={values.horaChegada} onChange={handleChange('horaChegada')} />
-                </Col>
-
-                <Col md={4}>
-                  <Form.Label>Função <span className="req">*</span></Form.Label>
-                  <Form.Select value={values.funcao} onChange={handleChange('funcao')}>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Identificação</h2>
+              <span className="na-optional">todos os campos são opcionais</span>
+            </div>
+            <div className="na-grid na-grid--3">
+              <div className="na-field na-col-2">
+                <label className="na-label">Nome completo</label>
+                <input className="na-input" value={values.nome} onChange={set('nome')} placeholder="Nome do paciente" />
+              </div>
+              <div className="na-field">
+                <label className="na-label">Hora da chegada</label>
+                <TimeInput value={values.horaChegada} onChange={v => setValues(p => ({ ...p, horaChegada: v }))} />
+              </div>
+              <div className="na-field">
+                <label className="na-label">Vínculo</label>
+                <select className="na-select" value={values.vinculo} onChange={set('vinculo')}>
+                  <option value="">Selecione...</option>
+                  {VINCULOS.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              {!isAluno && (
+                <div className="na-field">
+                  <label className="na-label">Função</label>
+                  <select className="na-select" value={values.funcao} onChange={set('funcao')}>
                     <option value="">Selecione...</option>
-                    {funcoes.map((f) => <option key={f} value={f}>{f}</option>)}
-                  </Form.Select>
-                </Col>
-
-                <Col md={4}>
-                  <Form.Label>Turma</Form.Label>
-                  <Form.Select value={values.classId} onChange={handleChange('classId')}>
-                    <option value="">Selecione...</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </Form.Select>
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
+                    {FUNCOES.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="na-field">
+                <label className="na-label">Turma</label>
+                <select className="na-select" value={values.classId} onChange={set('classId')}>
+                  <option value="">Selecione...</option>
+                  {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </section>
 
           {/* Atendimento */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white"><strong>Atendimento</strong></Card.Header>
-            <Card.Body>
-              <Row className="g-3">
-                <Col md={4}>
-                  <Form.Label>Motivo <span className="req">*</span></Form.Label>
-                  <Form.Select value={values.motivoId} onChange={handleChange('motivoId')}>
-                    <option value="">Selecione...</option>
-                    {reasons.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </Form.Select>
-                </Col>
-
-                <Col md={4}>
-                  <Form.Label>Responsável</Form.Label>
-                  <Form.Control value={values.responsavel} onChange={handleChange('responsavel')} placeholder="Nome do responsável" />
-                </Col>
-
-                <Col md={4}>
-                  <Form.Label>Comunicação</Form.Label>
-                  <Form.Select value={values.comunicacaoId} onChange={handleChange('comunicacaoId')}>
-                    <option value="">Selecione...</option>
-                    {communications.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </Form.Select>
-                </Col>
-
-                <Col xs={12}>
-                  <Form.Label>Descrição</Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={3}
-                    value={values.descricao}
-                    onChange={handleChange('descricao')}
-                    placeholder="Descreva sinais, queixas ou observações relevantes"
-                  />
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Atendimento</h2>
+            </div>
+            <div className="na-grid na-grid--3">
+              <div className="na-field">
+                <label className="na-label">Motivo</label>
+                <select className="na-select" value={values.motivoId} onChange={set('motivoId')}>
+                  <option value="">Selecione...</option>
+                  {reasons.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+              <div className="na-field">
+                <label className="na-label">Responsável</label>
+                <input className="na-input" value={values.responsavel} onChange={set('responsavel')} placeholder="Nome do responsável" />
+              </div>
+              <div className="na-field">
+                <label className="na-label">Comunicação</label>
+                <select className="na-select" value={values.comunicacaoId} onChange={set('comunicacaoId')}>
+                  <option value="">Selecione...</option>
+                  {communications.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="na-field na-col-3">
+                <label className="na-label">Conduta / Observações</label>
+                <textarea className="na-textarea" rows={3} value={values.descricao} onChange={set('descricao')}
+                  placeholder="Sinais, queixas, conduta adotada..." />
+              </div>
+            </div>
+          </section>
 
           {/* Sinais vitais */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white">
-              <strong>Sinais vitais</strong>{' '}
-              <Badge bg="secondary" pill className="ms-2">opcional</Badge>
-            </Card.Header>
-            <Card.Body>
-              <Row className="g-3">
-                <Col md={2}>
-                  <Form.Label>HGT (mg/dl)</Form.Label>
-                  <Form.Control value={values.hgt} onChange={handleChange('hgt')} inputMode="numeric" />
-                </Col>
-                <Col md={2}>
-                  <Form.Label>T (°C)</Form.Label>
-                  <Form.Control value={values.temperatura} onChange={handleChange('temperatura')} inputMode="decimal" />
-                </Col>
-                <Col md={2}>
-                  <Form.Label>FC (bpm)</Form.Label>
-                  <Form.Control value={values.fc} onChange={handleChange('fc')} inputMode="numeric" />
-                </Col>
-                <Col md={3}>
-                  <Form.Label>PA (mmHg)</Form.Label>
-                  <Form.Control value={values.pa} onChange={handleChange('pa')} placeholder="ex.: 110/70" />
-                </Col>
-                <Col md={3}>
-                  <Form.Label>SpO₂ (%)</Form.Label>
-                  <Form.Control value={values.spo2} onChange={handleChange('spo2')} inputMode="numeric" />
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Sinais vitais</h2>
+            </div>
+            <div className="na-grid na-grid--5">
+              {([
+                { label: 'HGT (mg/dl)',    field: 'hgt',         placeholder: '40–500' },
+                { label: 'Temperatura °C', field: 'temperatura', placeholder: '35–42' },
+                { label: 'FC (bpm)',        field: 'fc',          placeholder: '40–200' },
+                { label: 'PA (mmHg)',       field: 'pa',          placeholder: '120/80' },
+                { label: 'SpO₂ (%)',        field: 'spo2',        placeholder: '70–100' },
+              ] as { label: string; field: keyof FormValues; placeholder: string }[]).map(({ label, field, placeholder }) => (
+                <div className="na-field" key={field}>
+                  <label className="na-label">{label}</label>
+                  <input className="na-input" value={values[field] as string}
+                    onChange={set(field)} placeholder={placeholder} inputMode="decimal" />
+                </div>
+              ))}
+            </div>
+          </section>
 
           {/* Medicamentos */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white">
-              <strong>Medicamentos</strong> <span className="text-muted">(se administrados)</span>
-            </Card.Header>
-            <Card.Body>
-              {renderItems(medItems)}
-            </Card.Body>
-          </Card>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Medicamentos</h2>
+              <span className="na-section-sub">Se administrados</span>
+            </div>
+            {loadingLookups
+              ? <div className="skeleton" style={{ height: 60, borderRadius: 10 }} />
+              : medItems.length === 0
+                ? <p className="na-empty">Nenhum medicamento cadastrado.</p>
+                : renderItems(medItems)}
+          </section>
 
           {/* Curativos */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white">
-              <strong>Curativos</strong> <span className="text-muted">(se utilizados)</span>
-            </Card.Header>
-            <Card.Body>
-              {renderItems(curItems)}
-              <Row className="mt-3">
-                <Col md={12}>
-                  <Form.Label>Outros</Form.Label>
-                  <Form.Control
-                    value={values.outros}
-                    onChange={handleChange('outros')}
-                    placeholder="Descreva materiais/medicamentos não listados"
-                  />
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Curativos e Materiais</h2>
+              <span className="na-section-sub">Se utilizados</span>
+            </div>
+            {loadingLookups
+              ? <div className="skeleton" style={{ height: 60, borderRadius: 10 }} />
+              : curItems.length === 0
+                ? <p className="na-empty">Nenhum curativo cadastrado.</p>
+                : renderItems(curItems)}
+          </section>
 
           {/* Encaminhamento */}
-          <Card className="mb-4 shadow-sm border-0">
-            <Card.Header className="bg-white"><strong>Encaminhamento</strong></Card.Header>
-            <Card.Body>
-              <Row className="g-3">
-                <Col md={4}>
-                  <Form.Label>Destino <span className="req">*</span></Form.Label>
-                  <Form.Select value={values.destino} onChange={handleChange('destino')}>
-                    <option value="">Selecione...</option>
-                    {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
-                  </Form.Select>
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
+          <section className="na-section">
+            <div className="na-section-header">
+              <h2 className="na-section-title">Encaminhamento / Destino</h2>
+            </div>
+            <div className="na-destino-grid">
+              {DESTINOS.map(d => (
+                <label key={d} className={`na-destino-opt ${values.destino === d ? 'na-destino-opt--active' : ''}`}>
+                  <input type="radio" name="destino" value={d}
+                    checked={values.destino === d} onChange={set('destino')} style={{ display: 'none' }} />
+                  <span className="na-destino-label">{DESTINO_LABELS[d]}</span>
+                  <span className="na-destino-val">{d}</span>
+                </label>
+              ))}
+            </div>
+          </section>
 
-          <div className="d-flex gap-2 justify-content-end">
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => { setValues(defaultValues); setSelectedItems({}); }}
-              disabled={submitting}
-            >
-              Limpar
-            </Button>
-            <Button variant="primary" type="submit" disabled={submitting || loadingLookups}>
-              {submitting ? 'Salvando...' : (loadingLookups ? 'Carregando...' : 'Salvar atendimento')}
-            </Button>
+          {/* Actions */}
+          <div className="na-form-actions">
+            <button type="button" className="btn-ghost" onClick={reset} disabled={submitting}>
+              Limpar formulário
+            </button>
+            <button type="submit" className="btn-brand" disabled={submitting || loadingLookups}>
+              <ClipboardCheck size={16} />
+              {submitting ? 'Salvando...' : 'Salvar atendimento'}
+            </button>
           </div>
-        </Form>
-      </Container>
-    </div>
+        </form>
+      </div>
+    </Layout>
   )
 }

@@ -5,9 +5,8 @@ import NovoAtendimento from './pages/NovoAtendimento'
 import Estoque from './pages/Estoque'
 import Historico from './pages/Historico'
 import Relatorios from './pages/Relatorios'
+import Prontuario from './pages/Prontuario'
 import Login from './pages/Login'
-
-
 
 const App: React.FC = () => {
   return (
@@ -18,8 +17,8 @@ const App: React.FC = () => {
       <Route path="/medicamentos" element={<Estoque />} />
       <Route path="/historico" element={<Historico />} />
       <Route path="/relatorios" element={<Relatorios />} />
+      <Route path="/prontuario" element={<Prontuario />} />
       <Route path="/login" element={<Login />} />
-
     </Routes>
   )
 }
